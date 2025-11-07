@@ -159,7 +159,7 @@ class EmbeddingService:
                     "labels": ",".join(issue.get("labels", []))
                 }
             })
-        
+        #comentando algo para fazer novo deploy
         # Processar pull requests
         pr_documents = []
         for pr in prs:
