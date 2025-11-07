@@ -1,7 +1,7 @@
 import os
 from github import Github
 from typing import List, Dict, Any, Optional
-
+import traceback    
 # [CORREÇÃO 1]: Removida a importação 'from sympy import limit'
 # (Ela estava causando um conflito de nomes com o parâmetro 'limit')
 
@@ -75,9 +75,10 @@ class GitHubService:
             print(f"[GitHubService] Encontradas {len(issues)} issues reais.")
             return issues
 
-        except AssertionError:
-            print(f"[GitHubService] Capturado 'AssertionError' ao buscar issues para {repo_name}. "
-                  "Provavelmente 'Issues' estão desabilitadas. Pulando a coleta de issues.")
+        except AssertionError as e:
+            print(f"[GitHubService] CAPTURADO ASSERTIONERROR EM GET_ISSUES para {repo_name}.")
+            print(f"Erro detalhado: {repr(e)}")
+            traceback.print_exc()  # <--- Isso imprimirá o traceback completo no log
             return []
         
         except Exception as e:
@@ -156,9 +157,10 @@ class GitHubService:
             print(f"[GitHubService] Encontrados {len(commits)} commits.")
             return commits
 
-        except AssertionError:
-            print(f"[GitHubService] Capturado 'AssertionError' ao buscar commits para {repo_name}. "
-                  "Provavelmente problema de acesso ou repositório vazio. Pulando a coleta de commits.")
+        except AssertionError as e:
+            print(f"[GitHubService] CAPTURADO ASSERTIONERROR EM GET_COMMITS para {repo_name}.")
+            print(f"Erro detalhado: {repr(e)}")
+            traceback.print_exc()  # <--- Isso imprimirá o traceback completo no log
             return []
         
         except Exception as e:
