@@ -1,0 +1,12 @@
+# Arquivos de ambiente
+.env
+
+# Banco de dados vetorial local
+chroma_db/
+
+# Arquivos de cache e S.O.
+__pycache__/
+*.pyc
+.venv/
+env/venv/
+venv

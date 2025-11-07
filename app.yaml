@@ -1,0 +1,34 @@
+runtime: python
+python_version: 3.11
+
+# Configurações para deploy no Heroku
+build:
+  packages:
+    - wkhtmltopdf  # Necessário para pdfkit
+
+# Configurações de ambiente
+env_variables:
+  PYTHONUNBUFFERED: "1"
+  CHROMA_PERSISTENCE_DIRECTORY: "./chroma_db"
+  REPORTS_DIRECTORY: "./reports"
+  LOG_LEVEL: "INFO"
+  ENABLE_CACHE: "true"
+  CACHE_EXPIRATION: "3600"
+  LLM_MODEL: "gpt-4"
+  EMBEDDING_MODEL: "all-MiniLM-L6-v2"
+
+# Configurações de recursos
+resources:
+  cpu: 1
+  memory_gb: 0.5
+  disk_size_gb: 10
+
+# Configurações de escalonamento
+automatic_scaling:
+  min_instances: 1
+  max_instances: 5
+  target_cpu_utilization: 0.65
+
+# Configurações de rede
+network:
+  session_affinity: true

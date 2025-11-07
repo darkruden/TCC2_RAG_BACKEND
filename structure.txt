@@ -1,0 +1,68 @@
+
+C:.
+|   .env
+|   .env.example
+|   .gitignore
+|   app.yaml
+|   Procfile
+|   requirements.txt
+|   structure.txt
+|   
++---app
+|   |   main.py
+|   |   Procfile
+|   |   __init__.py
+|   |   
+|   +---api
+|   +---chroma_db
+|   |       chroma.sqlite3
+|   |       
+|   +---core
+|   |       performance.py
+|   |       
+|   +---db
+|   +---models
+|   +---services
+|   |   |   cache_service.py
+|   |   |   embedding_service.py
+|   |   |   github_service.py
+|   |   |   ingest_service.py
+|   |   |   llm_service.py
+|   |   |   rag_service.py
+|   |   |   report_service.py
+|   |   |   __init__.py
+|   |   |   
+|   |   \---__pycache__
+|   |           embedding_service.cpython-311.pyc
+|   |           github_service.cpython-311.pyc
+|   |           ingest_service.cpython-311.pyc
+|   |           llm_service.cpython-311.pyc
+|   |           rag_service.cpython-311.pyc
+|   |           __init__.cpython-311.pyc
+|   |           
+|   +---utils
+|   \---__pycache__
+|           main.cpython-311.pyc
+|           __init__.cpython-311.pyc
+|           
++---chroma_db
+|   |   chroma.sqlite3
+|   |   
+|   \---bbedfbf5-ad34-4e2a-afc6-c58cf52ca5b8
+|           data_level0.bin
+|           header.bin
+|           length.bin
+|           link_lists.bin
+|           
++---tests
+|   |   test_chroma.py
+|   |   test_embedding_service.py
+|   |   test_github_service.py
+|   |   test_integration.py
+|   |   test_llm_service.py
+|   |   test_openai.py
+|   |   test_report_service.py
+|   |   
+|   \---__pycache__
+|           test_openai.cpython-311.pyc
+|           
