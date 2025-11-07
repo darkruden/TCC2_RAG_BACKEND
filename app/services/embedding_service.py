@@ -156,7 +156,7 @@ class EmbeddingService:
                     "state": issue["state"],
                     "url": issue["url"],
                     "created_at": issue["created_at"],
-                    "labels": issue.get("labels", [])
+                    "labels": ",".join(issue.get("labels", []))
                 }
             })
         

@@ -1,5 +1,5 @@
 import os
-from github import Github
+from github import Github, GithubObject
 from typing import List, Dict, Any, Optional
 import traceback    
 # [CORREÇÃO 1]: Removida a importação 'from sympy import limit'
@@ -44,8 +44,8 @@ class GitHubService:
         try:
             repo = self.get_repository(repo_name)
             issues = []
-            
-            issues_query = repo.get_issues(state=state, labels=labels)
+            labels_list = labels if labels is not None else []
+            issues_query = repo.get_issues(state=state, labels=labels_list)
             
             # Itera sobre a consulta e aplica o limite manualmente
             # Isso corrige o bug de fatiar (slice) antes de filtrar
@@ -129,8 +129,9 @@ class GitHubService:
         try:
             repo = self.get_repository(repo_name)
             commits = []
-            
-            commits_query = repo.get_commits(sha=branch, path=path)
+            branch_sha = branch if branch is not None else GithubObject.NotSet
+            path_str = path if path is not None else GithubObject.NotSet
+            commits_query = repo.get_commits(sha=branch_sha, path=path_str)
             
             # Itera sobre a consulta e aplica o limite manualmente
             # (Mais robusto do que fatiar, que era a fonte do Bug 1)
@@ -157,10 +158,9 @@ class GitHubService:
             print(f"[GitHubService] Encontrados {len(commits)} commits.")
             return commits
 
-        except AssertionError as e:
-            print(f"[GitHubService] CAPTURADO ASSERTIONERROR EM GET_COMMITS para {repo_name}.")
-            print(f"Erro detalhado: {repr(e)}")
-            traceback.print_exc()  # <--- Isso imprimirá o traceback completo no log
+        except AssertionError:
+            print(f"[GitHubService] Capturado 'AssertionError' ao buscar commits para {repo_name}. "
+                  "Provavelmente problema de acesso ou repositório vazio. Pulando a coleta de commits.")
             return []
         
         except Exception as e:
