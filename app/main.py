@@ -181,8 +181,9 @@ async def ingestar(dados: IngestRequest):
             repo, 
             dados.issues_limit, 
             dados.prs_limit, 
-            dados.commits_limit
-        )
+            dados.commits_limit,
+            job_timeout=600  # <--- INFORMA À FILA: "Esta tarefa pode levar 10 minutos"
+)
 
         msg = f"Solicitação de ingestão para {repo} recebida e enfileirada."
         print(f"[SUCESSO] {msg} Job ID: {job.id}")

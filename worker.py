@@ -17,7 +17,9 @@ redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
 conn = redis.from_url(redis_url)
 
 if __name__ == '__main__':
-    queues = [Queue(name, connection=conn) for name in listen]
+    # O timeout é um argumento da Fila, não do Worker.
+    # Vamos criar a fila 'ingest' com 10 minutos (600s) de timeout
+    queues = [Queue(name, connection=conn, default_timeout=600) for name in listen]
     print(f"Trabalhador (Worker) iniciado. Aguardando tarefas na(s) fila(s): {', '.join(listen)}...")
 
     # --- INÍCIO DA CORREÇÃO ---
@@ -29,7 +31,7 @@ if __name__ == '__main__':
     else:  # posix (Linux, macOS)
         print("Rodando no POSIX: Usando Worker padrão (com fork).")
         worker_class = Worker
-
-    worker = worker_class(queues, connection=conn, job_timeout=600)
+    # Dê às tarefas um timeout de 10 minutos (600 segundos) em vez do padrão (180s)
+    worker = worker_class(queues, connection=conn)
     worker.work()
     # --- FIM DA CORREÇÃO ---
