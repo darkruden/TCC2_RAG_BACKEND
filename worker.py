@@ -30,6 +30,6 @@ if __name__ == '__main__':
         print("Rodando no POSIX: Usando Worker padrão (com fork).")
         worker_class = Worker
 
-    worker = worker_class(queues, connection=conn)
+    worker = worker_class(queues, connection=conn, job_timeout=600)
     worker.work()
     # --- FIM DA CORREÇÃO ---
