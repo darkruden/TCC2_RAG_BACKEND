@@ -16,7 +16,7 @@ except ValueError as e:
     github_service = None
     embedding_service = None
 
-def ingest_repo(owner_repo: str):
+def ingest_repo(owner_repo: str, issues_limit: int = 20, prs_limit: int = 10, commits_limit: int = 15):
     """
     Orquestra a ingestão de dados do GitHub para o ChromaDB.
     
@@ -34,16 +34,16 @@ def ingest_repo(owner_repo: str):
        # [COLE ESSA NOVA VERSÃO]
 
         # 1. Buscar dados do GitHub (COM LIMITES)
-        print(f"Buscando issues para {owner_repo} (limite: 20)...")
-        issues = github_service.get_issues(owner_repo, state="all", limit=20)
+        print(f"Buscando issues para {owner_repo} (limite: {issues_limit})...") # Log melhorado
+        issues = github_service.get_issues(owner_repo, state="all", limit=issues_limit)
         print(f"Encontradas {len(issues)} issues.")
 
-        print(f"Buscando Pull Requests para {owner_repo} (limite: 10)...")
-        prs = github_service.get_pull_requests(owner_repo, state="all", limit=10)
+        print(f"Buscando Pull Requests para {owner_repo} (limite: {prs_limit})...") # Log melhorado
+        prs = github_service.get_pull_requests(owner_repo, state="all", limit=prs_limit)
         print(f"Encontrados {len(prs)} Pull Requests.")
 
-        print(f"Buscando Commits para {owner_repo} (limite: 15)...")
-        commits = github_service.get_commits(owner_repo, limit=15)
+        print(f"Buscando Commits para {owner_repo} (limite: {commits_limit})...") # Log melhorado
+        commits = github_service.get_commits(owner_repo, limit=commits_limit)
         print(f"Encontrados {len(commits)} commits.")
 
         # 2. Processar e salvar no ChromaDB

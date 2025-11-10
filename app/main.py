@@ -58,6 +58,9 @@ class RelatorioRequest(BaseModel):
 
 class IngestRequest(BaseModel):
     repositorio: str
+    issues_limit: Optional[int] = 20  # O padrão é 20
+    prs_limit: Optional[int] = 10      # O padrão é 10
+    commits_limit: Optional[int] = 15  # O padrão é 15
 
 class ConsultaResponse(BaseModel):
     resposta: str
@@ -172,17 +175,19 @@ async def ingestar(dados: IngestRequest):
         raise HTTPException(status_code=400, detail="Campo 'repositorio' é obrigatório")
 
     try:
-        # --- MUDANÇA PRINCIPAL ---
-        # Em vez de: msg = ingest_repo(repo)
-        # Nós enfileiramos a função 'ingest_repo' com o argumento 'repo'
-        
-        job = q.enqueue(ingest_repo, repo)
-        
+    # Agora passamos os limites para a função que será enfileirada
+        job = q.enqueue(
+            ingest_repo, 
+            repo, 
+            dados.issues_limit, 
+            dados.prs_limit, 
+            dados.commits_limit
+        )
+
         msg = f"Solicitação de ingestão para {repo} recebida e enfileirada."
         print(f"[SUCESSO] {msg} Job ID: {job.id}")
-        
+
         return {"mensagem": msg, "job_id": job.id}
-        # -------------------------
 
     except Exception as e:
         error_message = repr(e) 

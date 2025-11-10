@@ -1,6 +1,8 @@
+from dotenv import load_dotenv
+load_dotenv()
 import os
 import redis
-from rq import Worker, Queue
+from rq import SimpleWorker, Worker, Queue
 
 # Importa a função de ingestão que o trabalhador precisa executar
 # (Como o worker.py está na raiz, a importação do pacote 'app' funciona)
@@ -15,13 +17,19 @@ redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
 conn = redis.from_url(redis_url)
 
 if __name__ == '__main__':
-    # A conexão 'conn' já está criada. O 'with Connection' não é necessário.
-
-    # Passa a lista de filas para o Worker escutar
     queues = [Queue(name, connection=conn) for name in listen]
-
     print(f"Trabalhador (Worker) iniciado. Aguardando tarefas na(s) fila(s): {', '.join(listen)}...")
 
-    # O Worker começa a escutar...
-    worker = Worker(queues, connection=conn)
+    # --- INÍCIO DA CORREÇÃO ---
+    # Determina qual classe de Worker usar com base no Sistema Operacional
+
+    if os.name == 'nt':  # 'nt' significa que é Windows
+        print("Rodando no Windows: Usando SimpleWorker (sem fork).")
+        worker_class = SimpleWorker
+    else:  # posix (Linux, macOS)
+        print("Rodando no POSIX: Usando Worker padrão (com fork).")
+        worker_class = Worker
+
+    worker = worker_class(queues, connection=conn)
     worker.work()
+    # --- FIM DA CORREÇÃO ---
