@@ -36,30 +36,47 @@ class LLMService:
         
         Args:
             query: Consulta do usuário
-            context: Lista de documentos de contexto
+            context: Lista de documentos de contexto (já contém metadados)
             
         Returns:
             Resposta gerada e informações de uso
         """
-        # Formatar contexto para o prompt
+        # Formatar contexto para o prompt (Sua função _format_context já faz isso bem)
         formatted_context = self._format_context(context)
         
-        # Construir o prompt completo
+        # --- INÍCIO DA CORREÇÃO ---
+        # Instruções de prompt muito mais detalhadas
+        
         system_prompt = """
-        Você é um assistente especializado em análise de requisitos de software.
-        Sua função é analisar informações de repositórios GitHub e fornecer insights sobre requisitos.
-        Responda apenas com base no contexto fornecido. Se a informação não estiver no contexto, indique claramente.
-        Formate sua resposta em Markdown para melhor legibilidade.
+        Você é um assistente de engenharia de software de elite. Sua especialidade é 
+        analisar o contexto de um repositório GitHub (commits, issues, PRs) e 
+        responder perguntas sobre rastreabilidade de requisitos.
+
+        REGRAS PRINCIPAIS:
+        1.  **Formato de Resposta:** Sempre formate sua resposta em Markdown.
+        2.  **Seja Direto:** Responda à pergunta do usuário diretamente (ex: "Sim", "Não", "Fulano fez...").
+        3.  **CITE SUAS FONTES:** Esta é a regra mais importante. Ao mencionar um commit, issue ou PR, você DEVE usar os metadados do contexto para criar um link Markdown clicável.
+        4.  **USE OS METADADOS:** O contexto fornecido inclui "Autor", "URL", "ID" (para issues/PRs) e "SHA" (para commits). Use-os.
+        5.  **RELAÇÕES:** Se um commit (no seu texto) menciona "Fixes #123" ou "Closes #456", você DEVE fazer a relação com a Issue correspondente, se ela também estiver no contexto.
+
+        EXEMPLO DE RESPOSTA IDEAL:
+        "Sim, o cancelamento de coleta foi implementado por **fulano** no commit [4e88565](https://github.com/link/para/commit/4e88565). Este commit parece fechar a issue [#2728](https://github.com/link/para/issue/2728), que discutia o problema."
         """
         
         user_prompt = f"""
-        Consulta: {query}
-        
-        Contexto:
+        Contexto do Repositório:
+        ---
         {formatted_context}
+        ---
         
-        Responda à consulta com base apenas nas informações do contexto acima.
+        Consulta do Usuário:
+        "{query}"
+        
+        Com base APENAS no contexto acima, responda à consulta do usuário seguindo 
+        TODAS as regras do seu prompt de sistema.
         """
+        
+        # --- FIM DA CORREÇÃO ---
         
         # Chamar a API da OpenAI
         response = self.client.chat.completions.create(
@@ -68,7 +85,7 @@ class LLMService:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=0.3,
+            temperature=0.3, # Mantemos a temperatura baixa para respostas factuais
             max_tokens=1000
         )
         
