@@ -8,7 +8,7 @@ import time # Usado para logs de tempo
 # Certifique-se de que o nome do seu índice no Pinecone seja este.
 # Se for diferente, mude aqui.
 PINECONE_INDEX_NAME = "tcc-rag-index" 
-
+# BUILD V3 - CORRIGINDO BATCHING
 
 class EmbeddingService:
     """
@@ -20,7 +20,7 @@ class EmbeddingService:
         """
         Inicializa os clientes da OpenAI e Pinecone.
         """
-        
+        print("[EmbeddingService] INICIANDO VERSÃO V6 - BATCH CORRIGIDO") # <-- ADICIONE ESTA LINHA
         # 1. (REMOVIDO) Não precisamos mais do diretório do Chroma
         print("[EmbeddingService] Inicializando...")
 
