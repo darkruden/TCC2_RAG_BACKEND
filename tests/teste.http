@@ -1,0 +1,15 @@
+@apiKey = testebrabotoken
+@apiUrl = https://protected-ridge-40630-cca6313c2003.herokuapp.com
+
+### 1. Testar Ingestão de Repositório
+# @name ingestTest
+POST {{apiUrl}}/api/ingest
+Content-Type: application/json
+X-API-Key: {{apiKey}}
+
+{
+    "repositorio": "octocat/Spoon-Knife",
+    "issues_limit": 5,
+    "prs_limit": 2,
+    "commits_limit": 3
+}
