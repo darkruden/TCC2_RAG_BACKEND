@@ -20,7 +20,7 @@ class EmbeddingService:
         """
         Inicializa os clientes da OpenAI e Pinecone.
         """
-        print("[EmbeddingService] INICIANDO VERSÃO V6 - BATCH CORRIGIDO") # <-- ADICIONE ESTA LINHA
+        print("[EmbeddingService] INICIANDO VERSÃO V9 - BATCH CORRIGIDO") # <-- ADICIONE ESTA LINHA
         # 1. (REMOVIDO) Não precisamos mais do diretório do Chroma
         print("[EmbeddingService] Inicializando...")
 
@@ -53,12 +53,11 @@ class EmbeddingService:
 
     def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
-        (FUNÇÃO OTIMIZADA COM BATCHING - V8 CORRIGIDA) Gera embeddings usando a API da OpenAI em lotes.
+        (FUNÇÃO OTIMIZADA COM BATCHING - V9 DEBUG) Gera embeddings usando a API da OpenAI em lotes.
         """
         if not self.openai_client:
             raise ValueError("Cliente OpenAI não inicializado.")
 
-        # Define um tamanho de lote (batch size) seguro
         BATCH_SIZE = 20  
         all_embeddings = []
         
@@ -67,19 +66,23 @@ class EmbeddingService:
         start_time = time.time()
         
         try:
-            # Loop que "fatia" a lista de textos
             for i in range(0, len(texts), BATCH_SIZE):
                 batch_texts = texts[i:i + BATCH_SIZE]
                 
-                # Mensagem de log melhorada
                 print(f"[EmbeddingService] Processando lote {i//BATCH_SIZE + 1} de { (len(texts) + BATCH_SIZE - 1) // BATCH_SIZE } ({len(batch_texts)} documentos)...")
                 
-                # --- A CORREÇÃO ESTÁ AQUI ---
+                # --- O DEBUG DEFINITIVO ESTÁ AQUI ---
+                # Vamos provar qual variável está sendo usada.
+                
+                input_data_to_send = batch_texts  # <--- Definimos a variável correta
+                
+                print(f"[EmbeddingService-DEBUG] Enviando {len(input_data_to_send)} textos para a OpenAI.")
+
                 response = self.openai_client.embeddings.create(
                     model=self.embedding_model_api,
-                    input=batch_texts  # <-- CORRIGIDO
+                    input=input_data_to_send  # <-- Usamos a variável de debug
                 )
-                # --- FIM DA CORREÇÃO ---
+                # --- FIM DO DEBUG ---
                 
                 all_embeddings.extend([embedding.embedding for embedding in response.data])
 
@@ -88,8 +91,7 @@ class EmbeddingService:
             return all_embeddings
             
         except Exception as e:
-            # Mostra qual lote falhou
-            print(f"Erro ao chamar API de Embeddings da OpenAI (no lote {i//BATCH_SIZE + 1}): {e}")
+            print(f"[EmbeddingService] Erro ao chamar API de Embeddings da OpenAI (no lote {i//BATCH_SIZE + 1}): {e}")
             raise
     
     def add_documents(self, documents: List[Dict[str, Any]], embeddings: List[List[float]]):
