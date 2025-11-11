@@ -196,7 +196,38 @@ async def ingestar(dados: IngestRequest):
         raise HTTPException(status_code=500, detail=f"Erro ao enfileirar tarefa de ingestão: {error_message}")
 
 # ---------------------------------
+# (Adicione isso no final do app/main.py)
 
+@app.get("/api/ingest/status/{job_id}", dependencies=[Depends(verificar_token)])
+async def get_job_status(job_id: str):
+    """
+    Verifica o status de um trabalho de ingestão na fila do RQ.
+    """
+    print(f"[API] Verificando status do Job ID: {job_id}")
+    try:
+        # Pega a fila 'ingest' (a mesma que o worker usa)
+        job = q.fetch_job(job_id)
+    except Exception as e:
+        print(f"[API] Erro ao buscar job (Redis?): {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao conectar com a fila: {e}")
+
+    if job is None:
+        print(f"[API] Job {job_id} não encontrado.")
+        return {"status": "not_found"}
+
+    status = job.get_status()
+    result = None
+    error_info = None
+
+    if status == 'finished':
+        result = job.result
+        print(f"[API] Job {job_id} finalizado. Resultado: {result}")
+    elif status == 'failed':
+        error_info = str(job.exc_info)
+        print(f"[API] Job {job_id} falhou. Erro: {error_info}")
+    
+    # Retorna o status (pode ser 'queued', 'started', 'finished', 'failed')
+    return {"status": status, "result": result, "error": error_info}
 # Ponto de entrada para execução direta (testes locais)
 if __name__ == "__main__":
     import uvicorn
