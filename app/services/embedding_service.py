@@ -3,7 +3,7 @@ from openai import OpenAI
 from pinecone import Pinecone, ServerlessSpec
 from typing import List, Dict, Any, Optional
 import time # Usado para logs de tempo
-
+# Comentario
 # --- PONTO CRÍTICO ---
 # Certifique-se de que o nome do seu índice no Pinecone seja este.
 # Se for diferente, mude aqui.
