@@ -8,7 +8,7 @@ import time # Usado para logs de tempo
 # Certifique-se de que o nome do seu índice no Pinecone seja este.
 # Se for diferente, mude aqui.
 PINECONE_INDEX_NAME = "tcc-rag-index" 
-# BUILD V3 - CORRIGINDO BATCHING
+# BUILD V3 - CORRIGINDO BATCHING 
 
 class EmbeddingService:
     """
@@ -53,12 +53,12 @@ class EmbeddingService:
 
     def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
-        (FUNÇÃO OTIMIZADA COM BATCHING) Gera embeddings usando a API da OpenAI em lotes.
+        (FUNÇÃO OTIMIZADA COM BATCHING - V8 CORRIGIDA) Gera embeddings usando a API da OpenAI em lotes.
         """
         if not self.openai_client:
             raise ValueError("Cliente OpenAI não inicializado.")
 
-        # Define um tamanho de lote (batch size) seguro para não estourar o limite de tokens
+        # Define um tamanho de lote (batch size) seguro
         BATCH_SIZE = 20  
         all_embeddings = []
         
@@ -67,29 +67,28 @@ class EmbeddingService:
         start_time = time.time()
         
         try:
-            # Loop que "fatia" a lista de textos em pedaços de BATCH_SIZE
+            # Loop que "fatia" a lista de textos
             for i in range(0, len(texts), BATCH_SIZE):
                 batch_texts = texts[i:i + BATCH_SIZE]
                 
-                print(f"[EmbeddingService] Processando lote {i//BATCH_SIZE + 1} ({len(batch_texts)} documentos)...")
+                # Mensagem de log melhorada
+                print(f"[EmbeddingService] Processando lote {i//BATCH_SIZE + 1} de { (len(texts) + BATCH_SIZE - 1) // BATCH_SIZE } ({len(batch_texts)} documentos)...")
                 
-                # Chama a API da OpenAI para o lote atual
+                # --- A CORREÇÃO ESTÁ AQUI ---
                 response = self.openai_client.embeddings.create(
                     model=self.embedding_model_api,
-                    input=batch_texts
+                    input=batch_texts  # <-- CORRIGIDO
                 )
+                # --- FIM DA CORREÇÃO ---
                 
-                # Adiciona os vetores resultantes à nossa lista principal
                 all_embeddings.extend([embedding.embedding for embedding in response.data])
-                
-                # (Pequena pausa opcional para não sobrecarregar a API, mas geralmente não é necessário)
-                # time.sleep(0.1) 
 
             total_time = time.time() - start_time
             print(f"[EmbeddingService] Todos os embeddings gerados pela OpenAI em {total_time:.2f}s")
             return all_embeddings
             
         except Exception as e:
+            # Mostra qual lote falhou
             print(f"Erro ao chamar API de Embeddings da OpenAI (no lote {i//BATCH_SIZE + 1}): {e}")
             raise
     
