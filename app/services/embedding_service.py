@@ -148,32 +148,49 @@ class EmbeddingService:
     
     def process_github_data(self, repo_name: str, issues: List[Dict], prs: List[Dict], commits: List[Dict]):
         """
-        (MODIFICADO) Orquestra a ingestão.
+        (FUNÇÃO OTIMIZADA COM TRUNCAMENTO) Processa dados do GitHub e armazena no Pinecone.
         """
         
-        # --- 1. Preparar Documentos (Igual antes) ---
-        # (Seu código de formatar issues/prs/commits estava aqui e continua o mesmo)
+        # --- INÍCIO DA CORREÇÃO ---
+        # Define um limite MÁXIMO de caracteres por documento.
+        # 8192 tokens é o limite da API. 7000 caracteres é uma
+        # margem de segurança excelente (aprox. 1 char = 1 token, mas varia)
+        MAX_TEXT_LENGTH = 7000
+        # --- FIM DA CORREÇÃO ---
+
+        collection_name = f"github_{repo_name.replace('/', '_')}"
+        
+        # --- 1. Preparar Documentos (COM TRUNCAMENTO) ---
         issue_documents = []
         for issue in issues:
+            # Pega o corpo da issue e TRUNCA em MAX_TEXT_LENGTH
+            body = (issue['body'] or "")[:MAX_TEXT_LENGTH] 
+            
             issue_documents.append({
                 "id": f"issue_{issue['id']}",
-                "text": f"Issue #{issue['id']}: {issue['title']}\n\n{issue['body']}",
+                "text": f"Issue #{issue['id']}: {issue['title']}\n\n{body}", # Usa o corpo truncado
                 "metadata": { "type": "issue", "id": issue["id"], "title": issue["title"], "state": issue["state"], "url": issue["url"], "created_at": issue["created_at"], "labels": ",".join(issue.get("labels", [])) }
             })
             
         pr_documents = []
         for pr in prs:
+            # Pega o corpo do PR e TRUNCA em MAX_TEXT_LENGTH
+            body = (pr['body'] or "")[:MAX_TEXT_LENGTH]
+            
             pr_documents.append({
                 "id": f"pr_{pr['id']}",
-                "text": f"Pull Request #{pr['id']}: {pr['title']}\n\n{pr['body']}",
+                "text": f"Pull Request #{pr['id']}: {pr['title']}\n\n{body}", # Usa o corpo truncado
                 "metadata": { "type": "pull_request", "id": pr["id"], "title": pr["title"], "state": pr["state"], "url": pr["url"], "created_at": pr["created_at"], "merged": pr.get("merged", False) }
             })
             
         commit_documents = []
         for commit in commits:
+            # Commits são pequenos, mas vamos truncar por segurança
+            message = (commit['message'] or "")[:MAX_TEXT_LENGTH]
+            
             commit_documents.append({
                 "id": f"commit_{commit['sha']}",
-                "text": f"Commit {commit['sha'][:7]}: {commit['message']}",
+                "text": f"Commit {commit['sha'][:7]}: {message}", # Usa a mensagem truncada
                 "metadata": { "type": "commit", "sha": commit["sha"], "author": commit["author"], "date": commit["date"], "url": commit["url"] }
             })
         
@@ -185,18 +202,23 @@ class EmbeddingService:
 
         print(f"[EmbeddingService] {len(all_documents)} documentos formatados. Gerando embeddings via API...")
 
-        # --- 2. Gerar Embeddings (Rápido, 2s) ---
+        # --- 2. Gerar Embeddings (RÁPIDO) ---
         texts_to_embed = [doc["text"] for doc in all_documents]
+        
+        # O generate_embeddings já está com o BATCH_SIZE=10 e o input=batch_texts
+        # (Se você quiser, pode remover os prints de DEBUG 'V9' e 'DEBUG' agora)
         embeddings_list = self.generate_embeddings(texts_to_embed)
         
         print(f"[EmbeddingService] Embeddings recebidos. Salvando no Pinecone...")
 
-        # --- 3. Salvar no Pinecone (Rápido, 2s) ---
+        # --- 3. Salvar no Pinecone (RÁPIDO) ---
         self.add_documents(
             documents=all_documents,
             embeddings=embeddings_list
         )
             
+        # --- 4. CORREÇÃO DO KEYERROR (que vimos antes) ---
+        # Retorna o dicionário sem o 'collection_name'
         return {
             "documents_count": len(all_documents),
             "issues_count": len(issue_documents),
