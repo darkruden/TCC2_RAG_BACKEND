@@ -19,7 +19,7 @@ conn = redis.from_url(redis_url)
 if __name__ == '__main__':
     # O timeout é um argumento da Fila, não do Worker.
     # Vamos criar a fila 'ingest' com 10 minutos (600s) de timeout
-    queues = [Queue(name, connection=conn, default_timeout=600) for name in listen]
+    queues = [Queue(name, connection=conn, default_timeout=1200) for name in listen]
     print(f"Trabalhador (Worker) iniciado. Aguardando tarefas na(s) fila(s): {', '.join(listen)}...")
 
     # --- INÍCIO DA CORREÇÃO ---
