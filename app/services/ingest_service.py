@@ -57,7 +57,7 @@ def ingest_repo(owner_repo: str, issues_limit: int = 20, prs_limit: int = 10, co
             commits=commits
         )
 
-        msg = f"Ingestão concluída para {resultado['collection_name']}: {resultado['documents_count']} documentos."
+        msg = f"Ingestão concluída para {owner_repo}: {resultado['documents_count']} documentos."
         print(f"[SUCESSO] {msg}")
         return msg
 
