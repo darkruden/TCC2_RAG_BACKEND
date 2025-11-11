@@ -1,0 +1,20 @@
+# Excluir cache do Python
+__pycache__/
+*.pyc
+
+# Excluir arquivos de ambiente (nunca devem ir para o deploy)
+.env
+.env.example
+
+# Excluir testes
+/tests/
+
+# Excluir o banco vetorial local (CRÍTICO!)
+/chroma_db/
+
+# Excluir logs locais
+/logs/
+*.log
+
+# Excluir arquivos do VSCode
+.vscode/
