@@ -8,4 +8,4 @@ python-multipart
 pytest
 redis
 rq
-pinecone-client
+pinecone
