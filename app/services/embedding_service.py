@@ -1,114 +1,134 @@
 import os
-from openai import OpenAI  # Importa o cliente da OpenAI
-import chromadb
+from openai import OpenAI
+from pinecone import Pinecone, ServerlessSpec
 from typing import List, Dict, Any, Optional
+import time # Usado para logs de tempo
+
+# --- PONTO CRÍTICO ---
+# Certifique-se de que o nome do seu índice no Pinecone seja este.
+# Se for diferente, mude aqui.
+PINECONE_INDEX_NAME = "tcc-rag-index" 
+
 
 class EmbeddingService:
     """
     Serviço para processamento de embeddings e armazenamento vetorial.
-    Utiliza a API da OpenAI para vetorização (rápido) e ChromaDB para armazenamento.
+    Utiliza API da OpenAI para vetorização e Pinecone (DaaS) para armazenamento.
     """
     
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", persistence_dir: str = None):
+    def __init__(self, persistence_dir: str = None):
         """
-        Inicializa o serviço de embeddings.
-        
-        Args:
-            model_name: (Não mais usado para o modelo local, mas mantido por consistência)
-            persistence_dir: Diretório para persistência do ChromaDB
+        Inicializa os clientes da OpenAI e Pinecone.
         """
         
-        # 1. Configura o diretório de persistência do Chroma (seu código original está correto)
-        raw_path = persistence_dir or os.getenv("CHROMA_PERSISTENCE_DIRECTORY", "./chroma_db")
-        self.persistence_dir = os.path.abspath(raw_path)
-        os.makedirs(self.persistence_dir, exist_ok=True)
-        print(f"[EmbeddingService] Diretório de persistência configurado em: {self.persistence_dir}")
+        # 1. (REMOVIDO) Não precisamos mais do diretório do Chroma
+        print("[EmbeddingService] Inicializando...")
 
-        # 2. (REMOVIDO) Não precisamos mais do modelo local de SentenceTransformer
-        # self.model = SentenceTransformer(model_name)
-        
-        # 3. (NOVO) Inicializa o cliente da OpenAI
-        # Ele vai ler a chave 'OPENAI_API_KEY' que já configuramos no Heroku
+        # 2. Inicializa o cliente da OpenAI (como antes)
         try:
             self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            self.embedding_model_api = "text-embedding-3-small"
         except Exception as e:
-            print(f"[EmbeddingService] ERRO: Falha ao inicializar cliente OpenAI. Verifique a OPENAI_API_KEY. Erro: {e}")
+            print(f"[EmbeddingService] ERRO: Falha ao inicializar cliente OpenAI: {e}")
             self.openai_client = None
             
-        # Usamos o modelo de embedding mais novo, rápido e barato da OpenAI
-        self.embedding_model_api = "text-embedding-3-small"
-
-        # 4. Inicializar ChromaDB (como antes)
-        self.client = chromadb.PersistentClient(path=self.persistence_dir)
-    
-    def get_or_create_collection(self, collection_name: str):
-        """ Obtém ou cria uma coleção no ChromaDB. """
+        # 3. (NOVO) Inicializa o cliente Pinecone
         try:
-            return self.client.get_collection(collection_name)
-        except Exception:
-            return self.client.create_collection(collection_name)
-    
+            api_key = os.getenv("PINECONE_API_KEY")
+            env = os.getenv("PINECONE_ENVIRONMENT")
+            if not api_key or not env:
+                raise ValueError("PINECONE_API_KEY ou PINECONE_ENVIRONMENT não definidos.")
+                
+            self.pc = Pinecone(api_key=api_key, environment=env)
+            
+            # Conecta ao índice. 
+            # (Você deve tê-lo criado no painel do Pinecone com 1536 dimensões)
+            self.index = self.pc.Index(PINECONE_INDEX_NAME)
+            print(f"[EmbeddingService] Conectado ao índice Pinecone '{PINECONE_INDEX_NAME}'.")
+            
+        except Exception as e:
+            print(f"[EmbeddingService] ERRO: Falha ao conectar com Pinecone: {e}")
+            self.pc = None
+            self.index = None
+
     def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
-        (FUNÇÃO OTIMIZADA) Gera embeddings usando a API da OpenAI.
+        (Igual antes) Gera embeddings usando a API da OpenAI.
         """
         if not self.openai_client:
             raise ValueError("Cliente OpenAI não inicializado.")
-            
+        
+        start_time = time.time()
         try:
             response = self.openai_client.embeddings.create(
                 model=self.embedding_model_api,
                 input=texts
             )
-            # Extrai os vetores da resposta da API
+            print(f"[EmbeddingService] Embeddings gerados pela OpenAI em {time.time() - start_time:.2f}s")
             return [embedding.embedding for embedding in response.data]
         except Exception as e:
             print(f"Erro ao chamar API de Embeddings da OpenAI: {e}")
             raise
     
-    def add_documents(self, collection_name: str, documents: List[Dict[str, Any]], embeddings: List[List[float]]):
+    def add_documents(self, documents: List[Dict[str, Any]], embeddings: List[List[float]]):
         """
-        Adiciona documentos E seus embeddings pré-calculados a uma coleção.
+        (MODIFICADO) Adiciona documentos e seus embeddings pré-calculados ao Pinecone.
         """
-        collection = self.get_or_create_collection(collection_name)
+        if not self.index:
+            raise ValueError("Cliente Pinecone não inicializado.")
+
+        start_time = time.time()
         
-        ids = [str(doc["id"]) for doc in documents]
-        texts = [doc["text"] for doc in documents]
-        metadatas = [doc.get("metadata", {}) for doc in documents]
+        # O Pinecone precisa que os vetores e metadados sejam formatados
+        # NOTA: O Pinecone não armazena o "documento" de texto em si, 
+        # apenas os metadados. Vamos salvar o texto nos metadados.
+        vectors_to_upsert = []
+        for doc, embedding in zip(documents, embeddings):
+            # Copia os metadados e ADICIONA o texto neles
+            doc_metadata = doc.get("metadata", {}).copy()
+            doc_metadata["text"] = doc.get("text", "") # Salva o texto nos metadados
+            
+            vectors_to_upsert.append({
+                "id": str(doc["id"]), 
+                "values": embedding, 
+                "metadata": doc_metadata
+            })
         
-        # Adiciona tudo, incluindo os embeddings que já geramos via API
-        collection.add(
-            ids=ids,
-            documents=texts,
-            metadatas=metadatas,
-            embeddings=embeddings  # A grande mudança está aqui!
+        # Envia os vetores para o Pinecone (operação de rede rápida)
+        try:
+            self.index.upsert(vectors=vectors_to_upsert)
+            print(f"[EmbeddingService] Vetores salvos no Pinecone em {time.time() - start_time:.2f}s")
+        except Exception as e:
+            print(f"Erro ao salvar vetores no Pinecone: {e}")
+            raise
+
+    def query_collection(self, query_text: str, n_results: int = 5) -> Dict[str, Any]:
+        """
+        (MODIFICADO) Consulta o índice do Pinecone.
+        """
+        if not self.index or not self.openai_client:
+            raise ValueError("Clientes não inicializados.")
+
+        # 1. Gera o embedding (vetor) para a pergunta do usuário
+        query_embedding = self.generate_embeddings([query_text])[0]
+        
+        # 2. Faz a busca no Pinecone
+        results = self.index.query(
+            vector=query_embedding,
+            top_k=n_results,
+            include_metadata=True
         )
-    
-    def query_collection(self, collection_name: str, query_text: str, n_results: int = 5) -> Dict[str, Any]:
-        """
-        Consulta uma coleção do ChromaDB.
-        (Esta função não muda, mas agora ela vai consultar usando os embeddings da OpenAI)
-        """
-        collection = self.get_or_create_collection(collection_name)
         
-        results = collection.query(
-            query_texts=[query_text],
-            n_results=n_results
-        )
-        
+        # Retorna o resultado bruto do Pinecone
         return results
-    
-    def delete_collection(self, collection_name: str):
-        """ Exclui uma coleção do ChromaDB. """
-        self.client.delete_collection(collection_name)
     
     def process_github_data(self, repo_name: str, issues: List[Dict], prs: List[Dict], commits: List[Dict]):
         """
-        (FUNÇÃO OTIMIZADA) Processa dados do GitHub e armazena no ChromaDB.
+        (MODIFICADO) Orquestra a ingestão.
         """
-        collection_name = f"github_{repo_name.replace('/', '_')}"
         
         # --- 1. Preparar Documentos (Igual antes) ---
+        # (Seu código de formatar issues/prs/commits estava aqui e continua o mesmo)
         issue_documents = []
         for issue in issues:
             issue_documents.append({
@@ -137,29 +157,23 @@ class EmbeddingService:
         
         if not all_documents:
             print("[EmbeddingService] Nenhum documento para processar.")
-            return { "collection_name": collection_name, "documents_count": 0, "issues_count": 0, "prs_count": 0, "commits_count": 0 }
+            return { "documents_count": 0, "issues_count": 0, "prs_count": 0, "commits_count": 0 }
 
         print(f"[EmbeddingService] {len(all_documents)} documentos formatados. Gerando embeddings via API...")
 
-        # --- 2. Gerar Embeddings (RÁPIDO) ---
-        # Pega todos os textos para enviar para a API de uma vez
+        # --- 2. Gerar Embeddings (Rápido, 2s) ---
         texts_to_embed = [doc["text"] for doc in all_documents]
-        
-        # Chama a API da OpenAI (rápido!)
         embeddings_list = self.generate_embeddings(texts_to_embed)
         
-        print(f"[EmbeddingService] Embeddings recebidos da API. Salvando no ChromaDB...")
+        print(f"[EmbeddingService] Embeddings recebidos. Salvando no Pinecone...")
 
-        # --- 3. Salvar no ChromaDB (RÁPIDO) ---
-        # Passa os documentos e os embeddings pré-calculados
+        # --- 3. Salvar no Pinecone (Rápido, 2s) ---
         self.add_documents(
-            collection_name=collection_name,
             documents=all_documents,
             embeddings=embeddings_list
         )
             
         return {
-            "collection_name": collection_name,
             "documents_count": len(all_documents),
             "issues_count": len(issue_documents),
             "prs_count": len(pr_documents),

@@ -1,16 +1,11 @@
-# [COLE ESSE NOVO CÓDIGO NO LUGAR DO CONTEÚDO ANTIGO DE rag_service.py]
-
-# O que você deve colar
 import os
 from .embedding_service import EmbeddingService
 from .llm_service import LLMService
 from typing import List, Dict, Any
-# 1. Inicializar os serviços que vamos usar
-# Eles pegam as configurações (tokens, paths) das variáveis de ambiente
+
+# 1. Inicializar os serviços (como antes)
 try:
     embedding_service = EmbeddingService()
-    
-    # O LLMService precisa da API_KEY
     llm_service = LLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         model=os.getenv("LLM_MODEL", "gpt-4")
@@ -19,32 +14,28 @@ except ValueError as e:
     print(f"Erro ao inicializar serviços (verifique .env): {e}")
     llm_service = None
     embedding_service = None
-except ImportError:
-    print("Erro de importação. Verifique se os serviços estão no mesmo diretório.")
-    llm_service = None
-    embedding_service = None
-
 
 def _formatar_resultados_query(resultados: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
-    Converte a saída do ChromaDB para o formato que o LLMService espera.
+    (MODIFICADO) Converte a saída do PINECONE para o formato que o LLMService espera.
     
-    ChromaDB retorna: {'documents': [[]], 'metadatas': [[]]}
+    Pinecone retorna: {'matches': [{'id': '...', 'metadata': {...}, 'score': ...}]}
     LLMService espera: [{'text': '...', 'metadata': {...}}, ...]
     """
     contexto_formatado = []
     
-    # Os resultados vêm em listas aninhadas, pegamos o primeiro (índice 0)
-    docs = resultados.get('documents', [[]])[0]
-    metadatas = resultados.get('metadatas', [[]])[0]
-
-    if not docs:
+    if "matches" not in resultados:
         return []
 
-    for doc_text, meta in zip(docs, metadatas):
+    for match in resultados["matches"]:
+        metadata = match.get("metadata", {})
+        
+        # Recuperamos o texto de dentro dos metadados (onde salvamos)
+        doc_text = metadata.get("text", "") 
+        
         contexto_formatado.append({
             "text": doc_text,
-            "metadata": meta
+            "metadata": metadata
         })
         
     return contexto_formatado
@@ -53,11 +44,8 @@ def _formatar_resultados_query(resultados: Dict[str, Any]) -> List[Dict[str, Any
 def gerar_resposta_rag(pergunta: str, repositorio: str):
     """
     Gera resposta contextualizada via RAG.
-    
-    1. Define o nome da coleção.
-    2. Busca o contexto no EmbeddingService.
-    3. Formata o contexto.
-    4. Gera a resposta no LLMService.
+    (Esta função não precisa de NENHUMA MUDANÇA, 
+     pois só _formatar_resultados_query mudou)
     """
     if not embedding_service or not llm_service:
         msg = "Serviços de Embedding ou LLM não foram inicializados."
@@ -65,16 +53,14 @@ def gerar_resposta_rag(pergunta: str, repositorio: str):
         return {"texto": f"Erro: {msg}", "contexto": "N/A"}
 
     try:
-        # 1. Definir o nome da coleção (DEVE ser igual ao usado na ingestão)
-        # O embedding_service.process_github_data usa este formato
-        collection_name = f"github_{repositorio.replace('/', '_')}"
-        print(f"[RAG] Consultando coleção: {collection_name}")
+        # 1. (REMOVIDO) Não precisamos mais do nome da coleção, 
+        #    pois o embedding_service já sabe o índice
+        print(f"[RAG] Consultando índice Pinecone para: {repositorio}")
 
-        # 2. Buscar contexto no ChromaDB via EmbeddingService
+        # 2. Buscar contexto no Pinecone via EmbeddingService
         resultados_query = embedding_service.query_collection(
-            collection_name=collection_name,
             query_text=pergunta,
-            n_results=2  # Pega os 5 resultados mais relevantes
+            n_results=5 # Pega os 5 resultados mais relevantes
         )
 
         # 3. Formatar o contexto para o LLMService
@@ -88,14 +74,12 @@ def gerar_resposta_rag(pergunta: str, repositorio: str):
         print(f"[RAG] Contexto encontrado: {len(contexto_formatado)} documentos.")
 
         # 4. Gerar resposta no LLMService
-        # Esta função já usa o prompt de sistema correto
         resposta_llm = llm_service.generate_response(
             query=pergunta,
             context=contexto_formatado
         )
 
-        # 5. Retornar resposta no formato esperado pelo main.py
-        # O "contexto" de retorno é apenas os trechos de texto para o frontend
+        # 5. Retornar resposta
         contexto_texto_bruto = "\n\n".join([doc['text'] for doc in contexto_formatado])
         
         return {

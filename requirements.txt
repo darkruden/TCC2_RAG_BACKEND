@@ -1,12 +1,11 @@
-# requirements.txt LIMPO
 fastapi
 uvicorn[standard]
 python-dotenv
 PyGithub
-chromadb
 openai
 markdown
 python-multipart
 pytest
 redis
 rq
+pinecone-client
