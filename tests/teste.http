@@ -9,7 +9,18 @@ X-API-Key: {{apiKey}}
 
 {
     "repositorio": "octocat/Spoon-Knife",
-    "issues_limit": 5,
-    "prs_limit": 2,
-    "commits_limit": 3
+    "issues_limit": 50,
+    "prs_limit": 100,
+    "commits_limit": 100
+}
+
+### 2. Testar Consulta RAG (O TCC em ação!)
+# @name queryTest
+POST {{apiUrl}}/api/consultar
+Content-Type: application/json
+X-API-Key: {{apiKey}}
+
+{
+    "query": "Qual é o propósito deste repositório? Ele é um exemplo?",
+    "repositorio": "octocat/Spoon-Knife"
 }
