@@ -20,7 +20,7 @@ class EmbeddingService:
         """
         Inicializa os clientes da OpenAI e Pinecone.
         """
-        print("[EmbeddingService] INICIANDO VERSÃO V9 - BATCH CORRIGIDO") # <-- ADICIONE ESTA LINHA
+        print("[EmbeddingService] INICIANDO VERSÃO V10 - BATCH CORRIGIDO") # <-- ADICIONE ESTA LINHA
         # 1. (REMOVIDO) Não precisamos mais do diretório do Chroma
         print("[EmbeddingService] Inicializando...")
 
@@ -58,7 +58,7 @@ class EmbeddingService:
         if not self.openai_client:
             raise ValueError("Cliente OpenAI não inicializado.")
 
-        BATCH_SIZE = 20  
+        BATCH_SIZE = 10  
         all_embeddings = []
         
         print(f"[EmbeddingService] Iniciando geração de embeddings em {len(texts)} textos (lotes de {BATCH_SIZE})...")
