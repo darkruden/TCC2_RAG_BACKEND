@@ -1,3 +1,5 @@
+# requirements.txt LIMPO
+
 # Forçar o PyTorch a instalar a versão de CPU (menor)
 --extra-index-url https://download.pytorch.org/whl/cpu
 
