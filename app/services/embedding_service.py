@@ -53,21 +53,44 @@ class EmbeddingService:
 
     def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
-        (Igual antes) Gera embeddings usando a API da OpenAI.
+        (FUNÇÃO OTIMIZADA COM BATCHING) Gera embeddings usando a API da OpenAI em lotes.
         """
         if not self.openai_client:
             raise ValueError("Cliente OpenAI não inicializado.")
+
+        # Define um tamanho de lote (batch size) seguro para não estourar o limite de tokens
+        BATCH_SIZE = 20  
+        all_embeddings = []
+        
+        print(f"[EmbeddingService] Iniciando geração de embeddings em {len(texts)} textos (lotes de {BATCH_SIZE})...")
         
         start_time = time.time()
+        
         try:
-            response = self.openai_client.embeddings.create(
-                model=self.embedding_model_api,
-                input=texts
-            )
-            print(f"[EmbeddingService] Embeddings gerados pela OpenAI em {time.time() - start_time:.2f}s")
-            return [embedding.embedding for embedding in response.data]
+            # Loop que "fatia" a lista de textos em pedaços de BATCH_SIZE
+            for i in range(0, len(texts), BATCH_SIZE):
+                batch_texts = texts[i:i + BATCH_SIZE]
+                
+                print(f"[EmbeddingService] Processando lote {i//BATCH_SIZE + 1} ({len(batch_texts)} documentos)...")
+                
+                # Chama a API da OpenAI para o lote atual
+                response = self.openai_client.embeddings.create(
+                    model=self.embedding_model_api,
+                    input=batch_texts
+                )
+                
+                # Adiciona os vetores resultantes à nossa lista principal
+                all_embeddings.extend([embedding.embedding for embedding in response.data])
+                
+                # (Pequena pausa opcional para não sobrecarregar a API, mas geralmente não é necessário)
+                # time.sleep(0.1) 
+
+            total_time = time.time() - start_time
+            print(f"[EmbeddingService] Todos os embeddings gerados pela OpenAI em {total_time:.2f}s")
+            return all_embeddings
+            
         except Exception as e:
-            print(f"Erro ao chamar API de Embeddings da OpenAI: {e}")
+            print(f"Erro ao chamar API de Embeddings da OpenAI (no lote {i//BATCH_SIZE + 1}): {e}")
             raise
     
     def add_documents(self, documents: List[Dict[str, Any]], embeddings: List[List[float]]):
