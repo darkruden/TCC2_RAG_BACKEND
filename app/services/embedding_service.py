@@ -187,7 +187,7 @@ class EmbeddingService:
             issue_documents.append({
                 "id": f"issue_{issue['id']}",
                 "text": f"Issue #{issue['id']}: {issue['title']}\n\n{body}", # Usa o corpo truncado
-                "metadata": { "type": "issue", "id": issue["id"], "title": issue["title"], "state": issue["state"], "url": issue["url"], "created_at": issue["created_at"], "labels": ",".join(issue.get("labels", [])) }
+                "metadata": { "repo_name": repo_name, "type": "issue", "id": issue["id"], "title": issue["title"], "state": issue["state"], "url": issue["url"], "created_at": issue["created_at"], "labels": ",".join(issue.get("labels", [])) }
             })
             
         pr_documents = []
@@ -198,7 +198,7 @@ class EmbeddingService:
             pr_documents.append({
                 "id": f"pr_{pr['id']}",
                 "text": f"Pull Request #{pr['id']}: {pr['title']}\n\n{body}", # Usa o corpo truncado
-                "metadata": { "type": "pull_request", "id": pr["id"], "title": pr["title"], "state": pr["state"], "url": pr["url"], "created_at": pr["created_at"], "merged": pr.get("merged", False) }
+                "metadata": { "repo_name": repo_name, "type": "pull_request", "id": pr["id"], "title": pr["title"], "state": pr["state"], "url": pr["url"], "created_at": pr["created_at"], "merged": pr.get("merged", False) }
             })
             
         commit_documents = []
@@ -209,7 +209,7 @@ class EmbeddingService:
             commit_documents.append({
                 "id": f"commit_{commit['sha']}",
                 "text": f"Commit {commit['sha'][:7]}: {message}", # Usa a mensagem truncada
-                "metadata": { "type": "commit", "sha": commit["sha"], "author": commit["author"], "date": commit["date"], "url": commit["url"] }
+                "metadata": { "repo_name": repo_name, "type": "commit", "sha": commit["sha"], "author": commit["author"], "date": commit["date"], "url": commit["url"] }
             })
         
         all_documents = issue_documents + pr_documents + commit_documents
