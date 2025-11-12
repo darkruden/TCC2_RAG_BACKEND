@@ -60,7 +60,8 @@ def gerar_resposta_rag(pergunta: str, repositorio: str):
         # 2. Buscar contexto no Pinecone via EmbeddingService
         resultados_query = embedding_service.query_collection(
             query_text=pergunta,
-            n_results=5 # Pega os 5 resultados mais relevantes
+            n_results=5, # Pega os 5 resultados mais relevantes
+            repo_name=repositorio # <-- ESTA LINHA CORRIGE O VAZAMENTO DE DADOS
         )
 
         # 3. Formatar o contexto para o LLMService
