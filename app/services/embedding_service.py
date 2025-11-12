@@ -1,4 +1,5 @@
 import os
+import traceback
 from openai import OpenAI
 from pinecone import Pinecone, ServerlessSpec
 from typing import List, Dict, Any, Optional
@@ -126,25 +127,42 @@ class EmbeddingService:
             print(f"Erro ao salvar vetores no Pinecone: {e}")
             raise
 
-    def query_collection(self, query_text: str, n_results: int = 5) -> Dict[str, Any]:
+    def query_collection(self, query_text: str, n_results: int = 5, repo_name: Optional[str] = None) -> Dict[str, Any]:
         """
-        (MODIFICADO) Consulta o índice do Pinecone.
+        Consulta o índice Pinecone.
+        
+        [CORREÇÃO]: Adicionado 'repo_name' para filtrar a consulta
+        e evitar vazamento de contexto.
         """
-        if not self.index or not self.openai_client:
-            raise ValueError("Clientes não inicializados.")
+        try:
+            # 1. Criar o embedding da consulta
+            query_embedding = self.create_embeddings([query_text])[0]
 
-        # 1. Gera o embedding (vetor) para a pergunta do usuário
-        query_embedding = self.generate_embeddings([query_text])[0]
+            # --- INÍCIO DA CORREÇÃO ---
+            
+            # 2. Criar o dicionário de filtro (metadata filter)
+            query_filter = {}
+            if repo_name:
+                query_filter = {"repo_name": {"$eq": repo_name}}
+                print(f"[EmbeddingService] Aplicando filtro de consulta para repo_name: {repo_name}")
+            else:
+                print("[EmbeddingService] ATENÇÃO: Consultando sem filtro de repositório.")
+
+            # 3. Consultar o Pinecone (AGORA COM FILTRO)
+            results = self.index.query(
+                vector=query_embedding,
+                top_k=n_results,
+                include_metadata=True,
+                filter=query_filter # <-- FILTRO APLICADO AQUI
+            )
+            # --- FIM DA CORREÇÃO ---
+            
+            return results
         
-        # 2. Faz a busca no Pinecone
-        results = self.index.query(
-            vector=query_embedding,
-            top_k=n_results,
-            include_metadata=True
-        )
-        
-        # Retorna o resultado bruto do Pinecone
-        return results
+        except Exception as e:
+            print(f"Erro ao consultar o Pinecone: {e}")
+            traceback.print_exc()
+            return {"matches": []}
     
     def process_github_data(self, repo_name: str, issues: List[Dict], prs: List[Dict], commits: List[Dict]):
         """
