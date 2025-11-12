@@ -61,7 +61,7 @@ REGRAS DE FORMATAÇÃO OBRIGATÓRIAS:
 2.  **Seja Direto:** Responda à pergunta do usuário diretamente.
 3.  **CITE SUAS FONTES:** Esta é a regra mais importante. Ao citar uma fonte, você DEVE usar os metadados 'URL' (que estão no contexto) para criar um link Markdown clicável.
 4.  **RELAÇÕES:** Se um commit (no seu texto) menciona "Fixes #123", você DEVE fazer a relação com a Issue correspondente, se ela também estiver no contexto.
-
+5.  **PERGUNTAS CRONOLÓGICAS:** Se o usuário perguntar sobre "último", "mais recente" ou "primeiro", você DEVE usar os metadados 'Data' (que estão no contexto) para determinar a ordem correta antes de responder.
 EXEMPLO DE FORMATAÇÃO CORRETA (Use este padrão):
 - A funcionalidade X foi implementada por fulano no commit [a4f5c6d](https://github.com/usuario/repo/commit/a4f5c6d3...).
 - Isso foi discutido na Issue [#123](https://github.com/usuario/repo/issues/123).
@@ -195,17 +195,20 @@ EXEMPLO DE FORMATAÇÃO INCORRETA (NUNCA FAÇA ISSO):
             if doc_type == "issue":
                 formatted += f"Issue #{doc_id}: {doc.get('metadata', {}).get('title', '')}\n"
                 formatted += f"URL: {doc.get('metadata', {}).get('url', '')}\n"
+                formatted += f"Data: {doc.get('metadata', {}).get('created_at', '')}\n"
                 formatted += f"Conteúdo: {doc.get('text', '')}\n\n"
             
             elif doc_type == "pull_request":
                 formatted += f"Pull Request #{doc_id}: {doc.get('metadata', {}).get('title', '')}\n"
                 formatted += f"URL: {doc.get('metadata', {}).get('url', '')}\n"
+                formatted += f"Data: {doc.get('metadata', {}).get('created_at', '')}\n"
                 formatted += f"Conteúdo: {doc.get('text', '')}\n\n"
             
             elif doc_type == "commit":
                 formatted += f"Commit {doc.get('metadata', {}).get('sha', '')[:7]}\n"
                 formatted += f"URL: {doc.get('metadata', {}).get('url', '')}\n"  # <-- LINHA ADICIONADA
                 formatted += f"Autor: {doc.get('metadata', {}).get('author', '')}\n"
+                formatted += f"Data: {doc.get('metadata', {}).get('date', '')}\n"
                 formatted += f"Mensagem: {doc.get('text', '')}\n\n"
             
             else:
