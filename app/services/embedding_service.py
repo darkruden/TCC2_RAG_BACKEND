@@ -136,7 +136,7 @@ class EmbeddingService:
         """
         try:
             # 1. Criar o embedding da consulta
-            query_embedding = self.create_embeddings([query_text])[0]
+            query_embedding = self.generate_embeddings([query_text])[0]
 
             # --- INÍCIO DA CORREÇÃO ---
             
