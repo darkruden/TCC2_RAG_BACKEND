@@ -97,16 +97,20 @@ class EmbeddingService:
     
     def add_documents(self, documents: List[Dict[str, Any]], embeddings: List[List[float]]):
         """
-        (MODIFICADO) Adiciona documentos e seus embeddings pré-calculados ao Pinecone.
+        (MODIFICADO V2) Adiciona documentos e seus embeddings pré-calculados ao Pinecone
+        em LOTES (Batches) para evitar o limite de tamanho da requisição (2MB).
         """
         if not self.index:
             raise ValueError("Cliente Pinecone não inicializado.")
 
         start_time = time.time()
         
-        # O Pinecone precisa que os vetores e metadados sejam formatados
-        # NOTA: O Pinecone não armazena o "documento" de texto em si, 
-        # apenas os metadados. Vamos salvar o texto nos metadados.
+        # --- INÍCIO DA CORREÇÃO ---
+        # Define um tamanho de lote seguro para o Pinecone
+        PINECONE_BATCH_SIZE = 100
+        # --- FIM DA CORREÇÃO ---
+        
+        # 1. Formata todos os vetores primeiro (como antes)
         vectors_to_upsert = []
         for doc, embedding in zip(documents, embeddings):
             # Copia os metadados e ADICIONA o texto neles
@@ -119,12 +123,26 @@ class EmbeddingService:
                 "metadata": doc_metadata
             })
         
-        # Envia os vetores para o Pinecone (operação de rede rápida)
+        # 2. (NOVO) Envia os vetores para o Pinecone em lotes
+        print(f"[EmbeddingService] {len(vectors_to_upsert)} vetores para salvar. Enviando em lotes de {PINECONE_BATCH_SIZE}...")
+        
         try:
-            self.index.upsert(vectors=vectors_to_upsert)
+            # Itera sobre a lista 'vectors_to_upsert' em "pedaços" (chunks)
+            for i in range(0, len(vectors_to_upsert), PINECONE_BATCH_SIZE):
+                
+                # Pega o lote atual (ex: 0 a 100, 100 a 200, ...)
+                batch_vectors = vectors_to_upsert[i:i + PINECONE_BATCH_SIZE]
+                
+                print(f"[EmbeddingService] Enviando lote {i//PINECONE_BATCH_SIZE + 1} de {(len(vectors_to_upsert) + PINECONE_BATCH_SIZE - 1) // PINECONE_BATCH_SIZE}...")
+                
+                # A chamada de 'upsert' agora está DENTRO do loop
+                self.index.upsert(vectors=batch_vectors)
+
             print(f"[EmbeddingService] Vetores salvos no Pinecone em {time.time() - start_time:.2f}s")
+        
         except Exception as e:
-            print(f"Erro ao salvar vetores no Pinecone: {e}")
+            # Se der erro, saberemos qual lote falhou
+            print(f"Erro ao salvar vetores no Pinecone (no lote {i//PINECONE_BATCH_SIZE + 1}): {e}")
             raise
 
     def query_collection(self, query_text: str, n_results: int = 5, repo_name: Optional[str] = None) -> Dict[str, Any]:
