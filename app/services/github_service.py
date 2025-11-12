@@ -86,10 +86,12 @@ class GitHubService:
             raise e
 
     
+    # app/services/github_service.py 
+
     def get_pull_requests(self, repo_name: str, state: str = "all", limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """
         Obtém pull requests de um repositório.
-        (Esta função já estava correta, mas padronizei o log)
+        [CORREÇÃO]: Itera manualmente para evitar 'IndexError' em repositórios vazios.
         """
         print(f"[GitHubService] Buscando PRs para {repo_name} (limite: {limit})...")
         repo = self.get_repository(repo_name)
@@ -97,11 +99,9 @@ class GitHubService:
         
         pr_query = repo.get_pulls(state=state)
         
-        # A lógica de fatiamento (slice) é segura aqui porque get_pulls() 
-        # SÓ retorna PRs, não precisamos filtrar.
-        items_to_iterate = pr_query[:limit] if limit else pr_query
-
-        for pr in items_to_iterate: 
+        # --- INÍCIO DA CORREÇÃO ---
+        # Itera sobre a consulta e aplica o limite manualmente
+        for pr in pr_query:
             pull_requests.append({
                 "id": pr.number,
                 "title": pr.title,
@@ -114,6 +114,12 @@ class GitHubService:
                 "author": pr.user.login if pr.user else None,
                 "comments_count": pr.comments
             })
+            
+            # Para de iterar quando atingimos o limite
+            if limit and len(pull_requests) >= limit:
+                print(f"[GitHubService] Limite de {limit} PRs atingido.")
+                break
+        # --- FIM DA CORREÇÃO ---
         
         print(f"[GitHubService] Encontrados {len(pull_requests)} PRs.")
         return pull_requests
