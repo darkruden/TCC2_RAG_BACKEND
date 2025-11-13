@@ -9,9 +9,16 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("Variável de ambiente DATABASE_URL não definida.")
 
+# --- INÍCIO DA CORREÇÃO (NameError) ---
+
+# 1. Define a variável 'db_url' a partir da string de conexão
+db_url = make_url(DATABASE_URL)
+
+# 2. Modifica a 'db_url' para adicionar o sslmode=require (necessário para o Supabase Pooler)
+# Esta é a linha que estava falhando antes porque a Linha 1 estava faltando.
 db_url = db_url.set(query={"sslmode": "require"})
 
-# O create_engine agora usa a URL 'postgres://...?...sslmode=require'
+# 3. Cria o engine com a URL final e corrigida
 engine = create_engine(db_url)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
