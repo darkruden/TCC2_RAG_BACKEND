@@ -21,6 +21,7 @@ A consulta deve ser classificada em uma destas "categorias":
 Se a categoria for "cronologica", extraia também:
 - "entidade": (commit, issue, pull_request)
 - "ordem": (asc, desc)
+- "limite": (o número de itens solicitados, ex: 4. O padrão é 1 se não for especificado.)
 
 Se a categoria for "semantica" ou "desconhecida", retorne apenas a categoria.
 
@@ -30,13 +31,13 @@ Usuário: "como funciona o sistema de login?"
 {"categoria": "semantica"}
 
 Usuário: "qual o ultimo commit deste repositorio e quem fez?"
-{"categoria": "cronologica", "entidade": "commit", "ordem": "desc"}
+{"categoria": "cronologica", "entidade": "commit", "ordem": "desc", "limite": 1}
+
+Usuário: "quais os 4 ultimos commits deste repositório?"
+{"categoria": "cronologica", "entidade": "commit", "ordem": "desc", "limite": 4}
 
 Usuário: "me mostre a issue mais antiga"
-{"categoria": "cronologica", "entidade": "issue", "ordem": "asc"}
-
-Usuário: "o que é o Dockerfile?"
-{"categoria": "semantica"}
+{"categoria": "cronologica", "entidade": "issue", "ordem": "asc", "limite": 1}
 """
 
     def route_query(self, query: str) -> Dict[str, Any]:

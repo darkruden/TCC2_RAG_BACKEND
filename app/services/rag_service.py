@@ -58,7 +58,7 @@ def gerar_resposta_rag(pergunta: str, repositorio: str):
             print("[RAG] Rota: CRONOLÓGICA. Buscando no SQL...")
             entidade = rota.get("entidade", "commit") # Padrão para commit
             ordem = rota.get("ordem", "desc")         # Padrão para "último"
-            
+            limite = int(rota.get("limite", 1))
             # Busca no Postgres (rápido, factual)
             contexto_formatado = metadata_service.find_document_by_date(
                 repo_name=repositorio,

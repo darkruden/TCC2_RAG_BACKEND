@@ -89,11 +89,11 @@ class MetadataService:
         finally:
             self.db.close()
 
-    def find_document_by_date(self, repo_name: str, doc_type: str, order: str = "desc") -> List[Dict[str, Any]]:
+    def find_document_by_date(self, repo_name: str, doc_type: str, order: str = "desc", limit: int = 1) -> List[Dict[str, Any]]:
         """
-        Busca um documento por data (para consultas cronológicas).
+        Busca N documentos por data (para consultas cronológicas).
         """
-        print(f"[MetadataService] Buscando SQL por: {doc_type}, ordem: {order}")
+        print(f"[MetadataService] Buscando SQL por: {doc_type}, ordem: {order}, limite: {limit}")
         try:
             query = self.db.query(Document).filter(
                 Document.repo_name == repo_name,
@@ -105,25 +105,31 @@ class MetadataService:
             else:
                 query = query.order_by(Document.created_at.asc())
             
-            # Pega o documento mais recente/antigo
-            result = query.first()
+            # --- 2. MUDE DE .first() PARA .limit().all() ---
+            # Pega os N documentos (ex: 4) em vez de apenas 1
+            results = query.limit(limit).all()
             
-            if not result:
+            if not results:
                 return []
                 
-            # Formata o resultado de volta para o formato que a LLM espera
-            return [{
-                "text": result.text_content,
-                "metadata": {
-                    "type": result.doc_type,
-                    "id": result.doc_id,
-                    "title": result.title,
-                    "author": result.author,
-                    "url": result.url,
-                    "date": result.created_at.isoformat() if result.created_at else None,
-                    "created_at": result.created_at.isoformat() if result.created_at else None
-                }
-            }]
+            # --- 3. FORMATE A LISTA DE RESULTADOS (LOOP) ---
+            # (Antes, isso estava formatando apenas um item)
+            formatted_results = []
+            for result in results: # Itera sobre os resultados
+                formatted_results.append({
+                    "text": result.text_content,
+                    "metadata": {
+                        "type": result.doc_type,
+                        "id": result.doc_id,
+                        "title": result.title,
+                        "author": result.author,
+                        "url": result.url,
+                        "date": result.created_at.isoformat() if result.created_at else None,
+                        "created_at": result.created_at.isoformat() if result.created_at else None
+                    }
+                })
+            return formatted_results # Retorna a lista completa
+        
         except Exception as e:
             print(f"[MetadataService] Erro ao buscar no SQL DB: {e}")
             return []
