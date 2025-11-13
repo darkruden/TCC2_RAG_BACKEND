@@ -13,17 +13,23 @@ class RouterService:
 Você é um roteador de consultas de API. Sua tarefa é classificar a intenção do usuário
 e extrair entidades. Responda APENAS com um objeto JSON válido.
 
-A consulta deve ser classificada em uma destas "categorias":
+Siga estas categorias:
 1. "semantica": Para perguntas sobre "como" algo funciona, "por que", "explique", ou propósito geral.
 2. "cronologica": Para perguntas que usam "último", "primeiro", "mais recente", "mais antigo".
 3. "desconhecida": Se a intenção não for clara.
 
-Se a categoria for "cronologica", extraia também:
-- "entidade": (commit, issue, pull_request)
-- "ordem": (asc, desc)
-- "limite": (o número de itens solicitados, ex: 4. O padrão é 1 se não for especificado.)
+REGRAS DE EXTRAÇÃO:
+- Se a categoria for "semantica" ou "desconhecida", retorne apenas a categoria.
+- Se a categoria for "cronologica", você DEVE extrair:
+    - "entidade": (commit, issue, pull_request)
+    - "ordem": (asc, desc)
+    - "limite": (o número de itens solicitados, ex: 4, 10, 5).
 
-Se a categoria for "semantica" ou "desconhecida", retorne apenas a categoria.
+REGRA MAIS IMPORTANTE:
+- Para "limite", se o usuário não especificar um número (ex: "qual o ultimo commit"),
+  o valor de "limite" DEVE ser 1.
+- Se o usuário especificar um número (ex: "quais os 4 ultimos"),
+  o valor de "limite" DEVE ser esse número (ex: 4).
 
 Exemplos:
 
@@ -36,8 +42,8 @@ Usuário: "qual o ultimo commit deste repositorio e quem fez?"
 Usuário: "quais os 4 ultimos commits deste repositório?"
 {"categoria": "cronologica", "entidade": "commit", "ordem": "desc", "limite": 4}
 
-Usuário: "me mostre a issue mais antiga"
-{"categoria": "cronologica", "entidade": "issue", "ordem": "asc", "limite": 1}
+Usuário: "me mostre as 10 issues mais antigas"
+{"categoria": "cronologica", "entidade": "issue", "ordem": "asc", "limite": 10}
 """
 
     def route_query(self, query: str) -> Dict[str, Any]:
