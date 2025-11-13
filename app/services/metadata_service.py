@@ -19,7 +19,11 @@ db_url = make_url(DATABASE_URL)
 db_url = db_url.set(query={"sslmode": "require"})
 
 # 3. Cria o engine com a URL final e corrigida
-engine = create_engine(db_url)
+# reestabelecendo-a automaticamente se estiver morta.
+engine = create_engine(
+    db_url,
+    pool_pre_ping=True 
+)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
