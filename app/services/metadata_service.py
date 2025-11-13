@@ -9,14 +9,9 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("Variável de ambiente DATABASE_URL não definida.")
 
-# Garante que o SQLAlchemy funcione com o 'postgres://' do Heroku
-db_url = make_url(DATABASE_URL)
-if db_url.drivername == "postgres":
-    db_url = db_url.set(drivername="postgresql+psycopg2")
 db_url = db_url.set(query={"sslmode": "require"})
 
-# Agora, o create_engine é simples, pois a 'db_url' 
-# já contém o parâmetro SSL necessário.
+# O create_engine agora usa a URL 'postgres://...?...sslmode=require'
 engine = create_engine(db_url)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
