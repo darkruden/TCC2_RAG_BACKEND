@@ -9,3 +9,5 @@ pytest
 redis
 rq
 pinecone
+sqlalchemy
+psycopg2-binary
