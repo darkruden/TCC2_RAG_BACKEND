@@ -13,7 +13,10 @@ if not DATABASE_URL:
 db_url = make_url(DATABASE_URL)
 if db_url.drivername == "postgres":
     db_url = db_url.set(drivername="postgresql+psycopg2")
-engine = create_engine(db_url)
+engine = create_engine(
+    db_url,
+    connect_args={"sslmode": "require"} 
+)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
