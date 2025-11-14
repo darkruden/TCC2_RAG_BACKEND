@@ -1,5 +1,4 @@
-# CÓDIGO CORRIGIDO PARA: app/services/report_service.py
-# (Com a correção do Content-Type para text/html; charset=utf-8)
+# CÓDIGO CORRIGIDO (AGORA COM camelCase) PARA: app/services/report_service.py
 
 import os
 import markdown
@@ -10,7 +9,7 @@ from .metadata_service import MetadataService
 from .llm_service import LLMService
 
 # --- SERVIÇO DE ARMAZENAMENTO SUPABASE ---
-# (Esta classe está correta e não precisa de mudanças)
+
 class SupabaseStorageService:
     """
     Serviço para fazer upload de arquivos (relatórios) para o Supabase Storage.
@@ -31,14 +30,21 @@ class SupabaseStorageService:
         try:
             content_bytes = content_string.encode('utf-8')
             
+            # --- INÍCIO DA CORREÇÃO (camelCase) ---
+            # A API de Storage do Supabase/GoTrue espera chaves em camelCase.
+            # ANTES (Errado): "content-type" e "cache-control"
+            # AGORA (Correto): "contentType" e "cacheControl"
+            file_opts = {
+                "contentType": content_type, # <-- CORRIGIDO
+                "cacheControl": "3600",      # <-- CORRIGIDO
+                "upsert": "true"
+            }
+            # --- FIM DA CORREÇÃO ---
+            
             self.client.storage.from_(bucket_name).upload(
                 path=filename,
                 file=content_bytes,
-                file_options={
-                    "content-type": content_type, # <--- A mágica acontece aqui
-                    "cache-control": "3600",
-                    "upsert": "true"
-                }
+                file_options=file_opts # <-- Passando as opções corrigidas
             )
             
             public_url = self.client.storage.from_(bucket_name).get_public_url(filename)
@@ -48,6 +54,9 @@ class SupabaseStorageService:
             print(f"[SUPABASE_SERVICE] Erro ao fazer upload para o Supabase: {repr(e)}")
             raise
 
+# -------------------------------------------------------------------------
+# O RESTANTE DO ARQUIVO ESTÁ CORRETO E NÃO MUDOU
+# -------------------------------------------------------------------------
 
 class ReportService:
     """
@@ -147,9 +156,6 @@ class ReportService:
         return template_html, filename
 
     def generate_markdown_report_content(self, repo_name: str, content: str) -> Tuple[str, str]:
-        """
-        Gera um nome de arquivo para o conteúdo Markdown.
-        """
         unique_id = str(uuid.uuid4()).split('-')[0]
         filename = f"{repo_name.replace('/', '_')}_report_{unique_id}.md"
         return content, filename
@@ -157,27 +163,20 @@ class ReportService:
     def generate_report_content(self, repo_name: str, content: str, format: str = "html") -> Tuple[str, str, str]:
         """
         Gera o CONTEÚDO do relatório no formato especificado.
-        
-        :return: Tupla (content_string, filename, content_type)
         """
         if format.lower() == "html":
             content_string, filename = self.generate_html_report_content(repo_name, content)
-            # --- AQUI ESTÁ A CORREÇÃO ---
-            # Antes: "text/html"
-            # Agora: "text/html; charset=utf-8"
+            # A correção da string "text/html; charset=utf-8" está correta
             return content_string, filename, "text/html; charset=utf-8"
         
         elif format.lower() == "markdown":
             content_string, filename = self.generate_markdown_report_content(repo_name, content)
-            # Boa prática adicionar aqui também
             return content_string, filename, "text/markdown; charset=utf-8"
         
         else:
             raise ValueError(f"Formato não suportado: {format}. Use 'html' ou 'markdown'.")
 
-# --- FUNÇÃO DO WORKER ATUALIZADA ---
-# (Esta função está correta e não precisa de mudanças, pois ela
-# apenas repassa o content_type que a função acima gera)
+# --- FUNÇÃO DO WORKER (NÃO MUDA) ---
         
 def processar_e_salvar_relatorio(repo_name: str, user_prompt: str, format: str = "html"):
     """
@@ -227,7 +226,7 @@ def processar_e_salvar_relatorio(repo_name: str, user_prompt: str, format: str =
             content_string=content_to_upload,
             filename=filename,
             bucket_name=SUPABASE_BUCKET_NAME,
-            content_type=content_type # <-- Passa o "text/html; charset=utf-8"
+            content_type=content_type
         )
         
         print(f"[WORKER-REPORTS] Upload com sucesso! URL: {public_url}")
