@@ -9,7 +9,7 @@ class LLMService:
     Utiliza a API da OpenAI para gerar respostas contextuais.
     """
     
-    def __init__(self, api_key: str = None, model: str = "gpt-4"):
+    def __init__(self, api_key: str = None, model: str = "gpt-4o-mini"):
         """
         Inicializa o serviço LLM.
         
