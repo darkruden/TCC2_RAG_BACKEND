@@ -1,4 +1,4 @@
-# CÓDIGO CORRIGIDO (AGORA COM io.BytesIO) PARA: app/services/report_service.py
+# CÓDIGO FINAL (revertendo BytesIO) PARA: app/services/report_service.py
 
 import os
 import markdown
@@ -7,7 +7,7 @@ from supabase import create_client, Client
 from typing import Dict, Any, Tuple
 from .metadata_service import MetadataService
 from .llm_service import LLMService
-import io  # <--- IMPORTAÇÃO NECESSÁRIA
+# NÃO precisamos mais do 'import io'
 
 # --- SERVIÇO DE ARMAZENAMENTO SUPABASE ---
 
@@ -29,15 +29,11 @@ class SupabaseStorageService:
         Faz upload de um CONTEÚDO (string) para o Supabase Storage.
         """
         try:
-            # --- INÍCIO DA CORREÇÃO (io.BytesIO) ---
-            
+            # --- INÍCIO DA CORREÇÃO ---
             # 1. Codifica a string para bytes
             content_bytes = content_string.encode('utf-8')
-            
-            # 2. Cria um "arquivo em memória" (file-like object) com esses bytes
-            content_stream = io.BytesIO(content_bytes)
 
-            # 3. Define as opções (o camelCase estava correto)
+            # 2. Define as opções em camelCase
             file_opts = {
                 "contentType": content_type,
                 "cacheControl": "3600",
@@ -47,7 +43,7 @@ class SupabaseStorageService:
             
             self.client.storage.from_(bucket_name).upload(
                 path=filename,
-                file=content_stream, # <-- Passa o stream (arquivo em memória)
+                file=content_bytes, # <-- Passa os bytes crus, NÃO o BytesIO
                 file_options=file_opts 
             )
             
@@ -136,14 +132,14 @@ class ReportService:
         
     </main>
     
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script src="https://cdn.jsdelivr.npm/mermaid@10/dist/mermaid.min.js"></script>
     <script>
         mermaid.initialize({{ startOnLoad: true, theme: 'neutral' }});
     </script>
 </body>
 </html>
         """
-        
+
         unique_id = str(uuid.uuid4()).split('-')[0]
         filename = f"{repo_name.replace('/', '_')}_report_{unique_id}.html"
         
@@ -157,7 +153,6 @@ class ReportService:
     def generate_report_content(self, repo_name: str, content: str, format: str = "html") -> Tuple[str, str, str]:
         if format.lower() == "html":
             content_string, filename = self.generate_html_report_content(repo_name, content)
-            # A string de Content-Type está correta
             return content_string, filename, "text/html; charset=utf-8"
         
         elif format.lower() == "markdown":
