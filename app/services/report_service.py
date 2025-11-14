@@ -1,4 +1,4 @@
-# CÓDIGO CORRIGIDO (AGORA COM camelCase) PARA: app/services/report_service.py
+# CÓDIGO CORRIGIDO (AGORA COM io.BytesIO) PARA: app/services/report_service.py
 
 import os
 import markdown
@@ -7,6 +7,7 @@ from supabase import create_client, Client
 from typing import Dict, Any, Tuple
 from .metadata_service import MetadataService
 from .llm_service import LLMService
+import io  # <--- IMPORTAÇÃO NECESSÁRIA
 
 # --- SERVIÇO DE ARMAZENAMENTO SUPABASE ---
 
@@ -28,23 +29,26 @@ class SupabaseStorageService:
         Faz upload de um CONTEÚDO (string) para o Supabase Storage.
         """
         try:
+            # --- INÍCIO DA CORREÇÃO (io.BytesIO) ---
+            
+            # 1. Codifica a string para bytes
             content_bytes = content_string.encode('utf-8')
             
-            # --- INÍCIO DA CORREÇÃO (camelCase) ---
-            # A API de Storage do Supabase/GoTrue espera chaves em camelCase.
-            # ANTES (Errado): "content-type" e "cache-control"
-            # AGORA (Correto): "contentType" e "cacheControl"
+            # 2. Cria um "arquivo em memória" (file-like object) com esses bytes
+            content_stream = io.BytesIO(content_bytes)
+
+            # 3. Define as opções (o camelCase estava correto)
             file_opts = {
-                "contentType": content_type, # <-- CORRIGIDO
-                "cacheControl": "3600",      # <-- CORRIGIDO
+                "contentType": content_type,
+                "cacheControl": "3600",
                 "upsert": "true"
             }
             # --- FIM DA CORREÇÃO ---
             
             self.client.storage.from_(bucket_name).upload(
                 path=filename,
-                file=content_bytes,
-                file_options=file_opts # <-- Passando as opções corrigidas
+                file=content_stream, # <-- Passa o stream (arquivo em memória)
+                file_options=file_opts 
             )
             
             public_url = self.client.storage.from_(bucket_name).get_public_url(filename)
@@ -59,21 +63,11 @@ class SupabaseStorageService:
 # -------------------------------------------------------------------------
 
 class ReportService:
-    """
-    Serviço para GERAÇÃO DE CONTEÚDO de relatórios.
-    """
-    
     def __init__(self):
         pass
     
     def generate_html_report_content(self, repo_name: str, markdown_content: str) -> Tuple[str, str]:
-        """
-        Converte o Markdown em um CONTEÚDO HTML (string) e gera um nome de arquivo.
-        """
-        
         html_body = markdown.markdown(markdown_content, extensions=['tables', 'fenced_code'])
-
-        # O template HTML (idêntico ao anterior)
         template_html = f"""
 <!DOCTYPE html>
 <html lang="pt-br">
@@ -161,12 +155,9 @@ class ReportService:
         return content, filename
     
     def generate_report_content(self, repo_name: str, content: str, format: str = "html") -> Tuple[str, str, str]:
-        """
-        Gera o CONTEÚDO do relatório no formato especificado.
-        """
         if format.lower() == "html":
             content_string, filename = self.generate_html_report_content(repo_name, content)
-            # A correção da string "text/html; charset=utf-8" está correta
+            # A string de Content-Type está correta
             return content_string, filename, "text/html; charset=utf-8"
         
         elif format.lower() == "markdown":
@@ -179,10 +170,6 @@ class ReportService:
 # --- FUNÇÃO DO WORKER (NÃO MUDA) ---
         
 def processar_e_salvar_relatorio(repo_name: str, user_prompt: str, format: str = "html"):
-    """
-    Função de tarefa (Task Function) para o worker.
-    """
-    
     SUPABASE_BUCKET_NAME = "reports" 
     
     try:
