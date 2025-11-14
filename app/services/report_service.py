@@ -5,6 +5,7 @@ import os
 import markdown
 import uuid
 import requests
+import re
 from supabase import create_client, Client
 from typing import Dict, Any, Tuple
 from .metadata_service import MetadataService
@@ -72,18 +73,22 @@ class ReportService:
         # 1. Converte o Markdown da LLM para HTML
         html_body = markdown.markdown(markdown_content, extensions=['tables', 'fenced_code'])
 
-        # --- INÍCIO DA CORREÇÃO (Substituir wrapper do Mermaid) ---
-        # O 'markdown' converte ```mermaid para <pre><code class="language-mermaid">
-        # O 'mermaid.js' espera <div class="mermaid">
-        # Vamos fazer a substituição:
-        html_body = html_body.replace(
-            '<pre><code class="language-mermaid">', 
-            '<div class="mermaid">'
+        # --- INÍCIO DA CORREÇÃO (Regex) ---
+        # A correção anterior (str.replace) era muito frágil.
+        # Vamos usar Regex (re.sub) para encontrar o bloco de código
+        # e substituir a tag <pre><code>...</code> por <div class="mermaid">...</div>
+        
+        # O re.DOTALL é crucial para fazer o '.' corresponder a quebras de linha
+        # dentro do bloco de código.
+        pattern = re.compile(
+            r'<pre><code class="language-mermaid">(.*?)</code></pre>',
+            re.DOTALL
         )
-        html_body = html_body.replace(
-            '</code></pre>', 
-            '</div>'
-        )
+        
+        # \1 é o "grupo capturado" (o código do gráfico)
+        replacement = r'<div class="mermaid">\1</div>' 
+        
+        html_body = re.sub(pattern, replacement, html_body)
         # --- FIM DA CORREÇÃO ---
 
         # 2. O template HTML (idêntico ao de antes)
@@ -138,7 +143,6 @@ class ReportService:
         th {{
             background-color: #161b22;
         }}
-        /* Este estilo '.mermaid' agora será usado */
         .mermaid {{
             background-color: #f6f8fa; /* Fundo claro para o gráfico */
             border-radius: 6px;
@@ -156,7 +160,7 @@ class ReportService:
         
     </main>
     
-    <script src="[https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js](https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js)"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script>
         mermaid.initialize({{ startOnLoad: true, theme: 'neutral' }});
     </script>
