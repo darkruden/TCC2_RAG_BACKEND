@@ -29,25 +29,29 @@ class SupabaseStorageService:
 
     def upload_file_content(self, content_string: str, filename: str, bucket_name: str, content_type: str = 'text/html'):
         
-        # Define o caminho temporário (o dyno Heroku pode escrever aqui)
         temp_filepath = os.path.join("/tmp", filename) 
 
         try:
-            # 1. Salva o conteúdo HTML no arquivo temporário
-            #    (Usar 'w' e 'utf-8' é crucial para o 'Relatório')
             with open(temp_filepath, 'w', encoding='utf-8') as f:
                 f.write(content_string)
 
-            # 2. Faz o upload do ARQUIVO (com 'rb' = read binary)
-            #    NÃO passamos 'file_options' desta vez.
+            # --- INÍCIO DA MUDANÇA ---
+            # Adicionamos 'contentDisposition' para forçar o download
+            file_opts = {
+                "contentType": content_type,
+                "cacheControl": "3600",
+                "upsert": "true",
+                "contentDisposition": f'attachment; filename="{filename}"' # <-- LINHA ADICIONADA
+            }
+            # --- FIM DA MUDANÇA ---
+            
             with open(temp_filepath, 'rb') as f_read:
                 self.client.storage.from_(bucket_name).upload(
-                    path=filename, # A biblioteca usará o ".html" aqui
-                    file=f_read
-                    # Sem file_options!
+                    path=filename,
+                    file=f_read,
+                    file_options=file_opts # Passa as novas opções
                 )
             
-            # 3. Pega a URL pública
             public_url = self.client.storage.from_(bucket_name).get_public_url(filename)
             return public_url
             
@@ -55,7 +59,6 @@ class SupabaseStorageService:
             print(f"[SUPABASE_SERVICE] Erro ao fazer upload (método /tmp): {repr(e)}")
             raise
         finally:
-            # 4. Limpa o arquivo temporário
             if os.path.exists(temp_filepath):
                 os.remove(temp_filepath)
 
