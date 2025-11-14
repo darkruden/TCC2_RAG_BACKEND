@@ -3,6 +3,7 @@
 import os
 import markdown
 import uuid
+import requests
 from supabase import create_client, Client
 from typing import Dict, Any, Tuple
 from .metadata_service import MetadataService
@@ -14,58 +15,58 @@ from .llm_service import LLMService
 class SupabaseStorageService:
     """
     Serviço para fazer upload de arquivos (relatórios) para o Supabase Storage.
+    MÉTODO: Upload manual via REST API (requests) para forçar o Content-Type.
     """
     def __init__(self):
-        url: str = os.getenv('SUPABASE_URL')
-        key: str = os.getenv('SUPABASE_KEY')
+        self.url: str = os.getenv('SUPABASE_URL')
+        self.key: str = os.getenv('SUPABASE_KEY')
         
-        if not url or not key:
+        if not self.url or not self.key:
             raise ValueError("Variáveis de ambiente 'SUPABASE_URL' e 'SUPABASE_KEY' não definidas.")
             
-        self.client: Client = create_client(url, key)
+        # Inicializa o cliente (agora só o usamos para .get_public_url())
+        self.client: Client = create_client(self.url, self.key)
 
     def upload_file_content(self, content_string: str, filename: str, bucket_name: str, content_type: str = 'text/html'):
         """
         Faz upload de um CONTEÚDO (string) para o Supabase Storage.
-        
-        MÉTODO: Salva o arquivo temporariamente no disco do Dyno
-        para forçar o 'supabase-py' a adivinhar o Content-Type corretamente.
         """
         
-        # Define um caminho de arquivo temporário no Heroku
-        # (O diretório /tmp é um dos únicos lugares onde podemos escrever)
-        temp_filepath = os.path.join("/tmp", filename) 
-
         try:
-            # 1. Salva o conteúdo HTML no arquivo temporário
-            with open(temp_filepath, 'w', encoding='utf-8') as f:
-                f.write(content_string)
+            # 1. Constrói o endpoint da API de Storage
+            endpoint = f"{self.url}/storage/v1/object/{bucket_name}/{filename}"
 
-            # 2. Define as opções em camelCase (para garantir)
-            file_opts = {
-                "contentType": content_type,
-                "cacheControl": "3600",
-                "upsert": "true"
+            # 2. Define os cabeçalhos manualmente (aqui está o controle total)
+            headers = {
+                "Authorization": f"Bearer {self.key}", # Usa a chave de serviço
+                "Content-Type": content_type,      # Força o content-type
+                "x-upsert": "true"                 # Sobrescreve
             }
+
+            # 3. Codifica o conteúdo
+            content_bytes = content_string.encode('utf-8')
             
-            # 3. Faz o upload do ARQUIVO (não mais dos bytes)
-            with open(temp_filepath, 'rb') as f_read:
-                self.client.storage.from_(bucket_name).upload(
-                    path=filename,
-                    file=f_read, # <-- Passa o objeto do arquivo
-                    file_options=file_opts 
-                )
+            # 4. Faz o upload via POST
+            response = requests.post(
+                endpoint, 
+                data=content_bytes, 
+                headers=headers
+            )
             
+            # 5. Verifica se houve erro
+            response.raise_for_status() # Lança um erro se o status for 4xx ou 5xx
+            
+            # 6. Pega a URL pública (usando o método do cliente)
             public_url = self.client.storage.from_(bucket_name).get_public_url(filename)
             return public_url
             
-        except Exception as e:
-            print(f"[SUPABASE_SERVICE] Erro ao fazer upload para o Supabase: {repr(e)}")
+        except requests.exceptions.HTTPError as e:
+            # Erro mais detalhado se o upload falhar
+            print(f"[SUPABASE_SERVICE] Erro HTTP no upload manual: {e.response.text}")
             raise
-        finally:
-            # 4. Limpa: Remove o arquivo temporário, não importa o que aconteça
-            if os.path.exists(temp_filepath):
-                os.remove(temp_filepath)
+        except Exception as e:
+            print(f"[SUPABASE_SERVICE] Erro ao fazer upload manual para o Supabase: {repr(e)}")
+            raise
 
 # -------------------------------------------------------------------------
 # O RESTANTE DO ARQUIVO ESTÁ CORRETO E NÃO MUDOU
