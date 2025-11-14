@@ -1,22 +1,21 @@
-# CÓDIGO FINAL PARA: app/services/report_service.py
-# (Usa Supabase Storage para salvar os relatórios)
+# CÓDIGO CORRIGIDO PARA: app/services/report_service.py
+# (Com a correção do Content-Type para text/html; charset=utf-8)
 
 import os
-import markdown # Usado para converter .md para .html
-import uuid     # Para nomes de arquivos únicos
-from supabase import create_client, Client # Cliente do Supabase
+import markdown
+import uuid
+from supabase import create_client, Client
 from typing import Dict, Any, Tuple
 from .metadata_service import MetadataService
 from .llm_service import LLMService
 
 # --- SERVIÇO DE ARMAZENAMENTO SUPABASE ---
-
+# (Esta classe está correta e não precisa de mudanças)
 class SupabaseStorageService:
     """
     Serviço para fazer upload de arquivos (relatórios) para o Supabase Storage.
     """
     def __init__(self):
-        # Lê as variáveis de ambiente (do Heroku Config Vars)
         url: str = os.getenv('SUPABASE_URL')
         key: str = os.getenv('SUPABASE_KEY')
         
@@ -28,29 +27,20 @@ class SupabaseStorageService:
     def upload_file_content(self, content_string: str, filename: str, bucket_name: str, content_type: str = 'text/html'):
         """
         Faz upload de um CONTEÚDO (string) para o Supabase Storage.
-        
-        :param content_string: O conteúdo HTML ou Markdown como uma string.
-        :param filename: O nome do arquivo a ser salvo no bucket (ex: "meu_relatorio.html").
-        :param bucket_name: O nome do bucket no Supabase (ex: "reports").
-        :param content_type: O MimeType (ex: 'text/html' ou 'text/markdown').
-        :return: A URL pública do arquivo no Supabase.
         """
         try:
-            # Converte a string de conteúdo para bytes
             content_bytes = content_string.encode('utf-8')
             
-            # Faz o upload
             self.client.storage.from_(bucket_name).upload(
                 path=filename,
                 file=content_bytes,
                 file_options={
-                    "content-type": content_type,
-                    "cache-control": "3600", # Cache de 1 hora
-                    "upsert": "true" # Sobrescreve se o arquivo já existir
+                    "content-type": content_type, # <--- A mágica acontece aqui
+                    "cache-control": "3600",
+                    "upsert": "true"
                 }
             )
             
-            # Obtém a URL pública do arquivo recém-enviado
             public_url = self.client.storage.from_(bucket_name).get_public_url(filename)
             return public_url
             
@@ -62,24 +52,19 @@ class SupabaseStorageService:
 class ReportService:
     """
     Serviço para GERAÇÃO DE CONTEÚDO de relatórios.
-    Esta classe não salva mais arquivos localmente.
     """
     
     def __init__(self):
-        pass # Não precisamos mais do output_dir
+        pass
     
     def generate_html_report_content(self, repo_name: str, markdown_content: str) -> Tuple[str, str]:
         """
         Converte o Markdown em um CONTEÚDO HTML (string) e gera um nome de arquivo.
-        NÃO SALVA MAIS O ARQUIVO LOCALMENTE.
-        
-        :return: Uma tupla (string_do_html, nome_do_arquivo)
         """
         
-        # 1. Converter o Markdown da LLM para HTML
         html_body = markdown.markdown(markdown_content, extensions=['tables', 'fenced_code'])
 
-        # 2. Definir o template HTML (o mesmo de antes)
+        # O template HTML (idêntico ao anterior)
         template_html = f"""
 <!DOCTYPE html>
 <html lang="pt-br">
@@ -156,8 +141,7 @@ class ReportService:
 </html>
         """
         
-        # 3. Gerar um nome de arquivo único
-        unique_id = str(uuid.uuid4()).split('-')[0] # Pega os 8 primeiros chars
+        unique_id = str(uuid.uuid4()).split('-')[0]
         filename = f"{repo_name.replace('/', '_')}_report_{unique_id}.html"
         
         return template_html, filename
@@ -165,9 +149,6 @@ class ReportService:
     def generate_markdown_report_content(self, repo_name: str, content: str) -> Tuple[str, str]:
         """
         Gera um nome de arquivo para o conteúdo Markdown.
-        NÃO SALVA MAIS O ARQUIVO LOCALMENTE.
-
-        :return: Uma tupla (string_do_markdown, nome_do_arquivo)
         """
         unique_id = str(uuid.uuid4()).split('-')[0]
         filename = f"{repo_name.replace('/', '_')}_report_{unique_id}.md"
@@ -181,42 +162,43 @@ class ReportService:
         """
         if format.lower() == "html":
             content_string, filename = self.generate_html_report_content(repo_name, content)
-            return content_string, filename, "text/html"
+            # --- AQUI ESTÁ A CORREÇÃO ---
+            # Antes: "text/html"
+            # Agora: "text/html; charset=utf-8"
+            return content_string, filename, "text/html; charset=utf-8"
         
         elif format.lower() == "markdown":
             content_string, filename = self.generate_markdown_report_content(repo_name, content)
-            return content_string, filename, "text/markdown"
+            # Boa prática adicionar aqui também
+            return content_string, filename, "text/markdown; charset=utf-8"
         
         else:
             raise ValueError(f"Formato não suportado: {format}. Use 'html' ou 'markdown'.")
 
 # --- FUNÇÃO DO WORKER ATUALIZADA ---
+# (Esta função está correta e não precisa de mudanças, pois ela
+# apenas repassa o content_type que a função acima gera)
         
 def processar_e_salvar_relatorio(repo_name: str, user_prompt: str, format: str = "html"):
     """
     Função de tarefa (Task Function) para o worker.
-    Busca os dados, chama a LLM, GERA o conteúdo e FAZ UPLOAD para o Supabase.
     """
     
-    # IMPORTANTE: Certifique-se que este bucket existe no seu painel Supabase!
     SUPABASE_BUCKET_NAME = "reports" 
     
     try:
-        # Inicializa os serviços DENTRO da função do worker
         metadata_service = MetadataService()
         llm_service = LLMService()
         report_service = ReportService()
-        supabase_service = SupabaseStorageService() # <--- Serviço Supabase
+        supabase_service = SupabaseStorageService()
         
     except Exception as e:
         print(f"[WORKER-REPORTS] Erro ao inicializar serviços: {repr(e)}")
-        # Retorna a string de erro, que será salva no Job e vista pelo frontend
         return f"Erro ao inicializar serviços: {repr(e)}"
 
     try:
-        print(f"[WORKK-REPORTS] Iniciando relatório para: {repo_name}")
+        print(f"[WORKER-REPORTS] Iniciando relatório para: {repo_name}")
         
-        # 1. Buscar TODOS os dados brutos
         dados_brutos = metadata_service.get_full_repo_analysis_data(repo_name)
         
         if not dados_brutos:
@@ -225,7 +207,6 @@ def processar_e_salvar_relatorio(repo_name: str, user_prompt: str, format: str =
 
         print(f"[WORKER-REPORTS] {len(dados_brutos)} registos encontrados. Enviando para LLM...")
 
-        # 2. Gerar o conteúdo do relatório (Markdown + Gráficos)
         report_content_md = llm_service.generate_analytics_report(
             repo_name=repo_name,
             user_prompt=user_prompt,
@@ -234,7 +215,6 @@ def processar_e_salvar_relatorio(repo_name: str, user_prompt: str, format: str =
         
         print("[WORKER-REPORTS] Relatório gerado pela LLM. Preparando para upload...")
 
-        # 3. Gerar o CONTEÚDO (HTML) e o NOME DO ARQUIVO
         (content_to_upload, filename, content_type) = report_service.generate_report_content(
             repo_name, 
             report_content_md, 
@@ -243,22 +223,18 @@ def processar_e_salvar_relatorio(repo_name: str, user_prompt: str, format: str =
         
         print(f"[WORKER-REPORTS] Conteúdo gerado. Fazendo upload de {filename} para Supabase...")
         
-        # 4. Fazer UPLOAD do conteúdo para o Supabase Storage
         public_url = supabase_service.upload_file_content(
             content_string=content_to_upload,
             filename=filename,
             bucket_name=SUPABASE_BUCKET_NAME,
-            content_type=content_type
+            content_type=content_type # <-- Passa o "text/html; charset=utf-8"
         )
         
-        print(f"[WORKET-REPORTS] Upload com sucesso! URL: {public_url}")
+        print(f"[WORKER-REPORTS] Upload com sucesso! URL: {public_url}")
         
-        # 5. Retornar a URL pública
-        # O frontend (App.js) receberá esta URL como 'job.result'
         return public_url
         
     except Exception as e:
         error_message = repr(e)
         print(f"[WORKER-REPORTS] Erro detalhado durante geração de relatório: {error_message}")
-        # Retorna a string de erro, que será salva no Job
         return f"Erro durante a geração do relatório: {error_message}"
