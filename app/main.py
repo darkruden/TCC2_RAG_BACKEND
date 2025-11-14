@@ -3,7 +3,7 @@
 from dotenv import load_dotenv
 load_dotenv() # Garante que o .env seja lido
 from app.services.report_service import processar_e_salvar_relatorio
-from fastapi import FastAPI, Depends, HTTPException, status, Header
+from fastapi import FastAPI, Depends, HTTPException, status, Header, Form, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
