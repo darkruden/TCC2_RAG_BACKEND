@@ -15,58 +15,49 @@ from .llm_service import LLMService
 class SupabaseStorageService:
     """
     Serviço para fazer upload de arquivos (relatórios) para o Supabase Storage.
-    MÉTODO: Upload manual via REST API (requests) para forçar o Content-Type.
+    MÉTODO: Salva no /tmp e deixa a biblioteca 'supabase-py'
+    adivinhar o Content-Type a partir da extensão .html do arquivo.
     """
     def __init__(self):
-        self.url: str = os.getenv('SUPABASE_URL')
-        self.key: str = os.getenv('SUPABASE_KEY')
+        url: str = os.getenv('SUPABASE_URL')
+        key: str = os.getenv('SUPABASE_KEY')
         
-        if not self.url or not self.key:
+        if not url or not key:
             raise ValueError("Variáveis de ambiente 'SUPABASE_URL' e 'SUPABASE_KEY' não definidas.")
             
-        # Inicializa o cliente (agora só o usamos para .get_public_url())
-        self.client: Client = create_client(self.url, self.key)
+        self.client: Client = create_client(url, key)
 
     def upload_file_content(self, content_string: str, filename: str, bucket_name: str, content_type: str = 'text/html'):
-        """
-        Faz upload de um CONTEÚDO (string) para o Supabase Storage.
-        """
         
+        # Define o caminho temporário (o dyno Heroku pode escrever aqui)
+        temp_filepath = os.path.join("/tmp", filename) 
+
         try:
-            # 1. Constrói o endpoint da API de Storage
-            endpoint = f"{self.url}/storage/v1/object/{bucket_name}/{filename}"
+            # 1. Salva o conteúdo HTML no arquivo temporário
+            #    (Usar 'w' e 'utf-8' é crucial para o 'Relatório')
+            with open(temp_filepath, 'w', encoding='utf-8') as f:
+                f.write(content_string)
 
-            # 2. Define os cabeçalhos manualmente (aqui está o controle total)
-            headers = {
-                "Authorization": f"Bearer {self.key}", # Usa a chave de serviço
-                "Content-Type": content_type,      # Força o content-type
-                "x-upsert": "true"                 # Sobrescreve
-            }
-
-            # 3. Codifica o conteúdo
-            content_bytes = content_string.encode('utf-8')
+            # 2. Faz o upload do ARQUIVO (com 'rb' = read binary)
+            #    NÃO passamos 'file_options' desta vez.
+            with open(temp_filepath, 'rb') as f_read:
+                self.client.storage.from_(bucket_name).upload(
+                    path=filename, # A biblioteca usará o ".html" aqui
+                    file=f_read
+                    # Sem file_options!
+                )
             
-            # 4. Faz o upload via POST
-            response = requests.post(
-                endpoint, 
-                data=content_bytes, 
-                headers=headers
-            )
-            
-            # 5. Verifica se houve erro
-            response.raise_for_status() # Lança um erro se o status for 4xx ou 5xx
-            
-            # 6. Pega a URL pública (usando o método do cliente)
+            # 3. Pega a URL pública
             public_url = self.client.storage.from_(bucket_name).get_public_url(filename)
             return public_url
             
-        except requests.exceptions.HTTPError as e:
-            # Erro mais detalhado se o upload falhar
-            print(f"[SUPABASE_SERVICE] Erro HTTP no upload manual: {e.response.text}")
-            raise
         except Exception as e:
-            print(f"[SUPABASE_SERVICE] Erro ao fazer upload manual para o Supabase: {repr(e)}")
+            print(f"[SUPABASE_SERVICE] Erro ao fazer upload (método /tmp): {repr(e)}")
             raise
+        finally:
+            # 4. Limpa o arquivo temporário
+            if os.path.exists(temp_filepath):
+                os.remove(temp_filepath)
 
 # -------------------------------------------------------------------------
 # O RESTANTE DO ARQUIVO ESTÁ CORRETO E NÃO MUDOU
