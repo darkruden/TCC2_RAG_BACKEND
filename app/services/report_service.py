@@ -67,9 +67,6 @@ class SupabaseStorageService:
         except Exception as e:
             print(f"[SUPABASE_SERVICE] Erro ao fazer upload manual para o Supabase: {repr(e)}")
             raise      
-        finally:
-            if os.path.exists(temp_filepath):
-                os.remove(temp_filepath)
 
 # -------------------------------------------------------------------------
 # O RESTANTE DO ARQUIVO ESTÁ CORRETO E NÃO MUDOU
