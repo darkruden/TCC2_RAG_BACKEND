@@ -69,7 +69,24 @@ class ReportService:
         pass
     
     def generate_html_report_content(self, repo_name: str, markdown_content: str) -> Tuple[str, str]:
+        # 1. Converte o Markdown da LLM para HTML
         html_body = markdown.markdown(markdown_content, extensions=['tables', 'fenced_code'])
+
+        # --- INÍCIO DA CORREÇÃO (Substituir wrapper do Mermaid) ---
+        # O 'markdown' converte ```mermaid para <pre><code class="language-mermaid">
+        # O 'mermaid.js' espera <div class="mermaid">
+        # Vamos fazer a substituição:
+        html_body = html_body.replace(
+            '<pre><code class="language-mermaid">', 
+            '<div class="mermaid">'
+        )
+        html_body = html_body.replace(
+            '</code></pre>', 
+            '</div>'
+        )
+        # --- FIM DA CORREÇÃO ---
+
+        # 2. O template HTML (idêntico ao de antes)
         template_html = f"""
 <!DOCTYPE html>
 <html lang="pt-br">
@@ -121,6 +138,7 @@ class ReportService:
         th {{
             background-color: #161b22;
         }}
+        /* Este estilo '.mermaid' agora será usado */
         .mermaid {{
             background-color: #f6f8fa; /* Fundo claro para o gráfico */
             border-radius: 6px;
@@ -138,7 +156,7 @@ class ReportService:
         
     </main>
     
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script src="[https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js](https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js)"></script>
     <script>
         mermaid.initialize({{ startOnLoad: true, theme: 'neutral' }});
     </script>
