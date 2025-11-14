@@ -5,6 +5,7 @@ load_dotenv() # Garante que o .env seja lido
 from app.services.report_service import processar_e_salvar_relatorio
 from fastapi import FastAPI, Depends, HTTPException, status, Header, Form, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import os
@@ -40,6 +41,8 @@ app = FastAPI(
     description="API para análise e rastreabilidade de requisitos de software usando RAG",
     version="0.1.0"
 )
+
+app.mount("/reports", StaticFiles(directory="reports"), name="reports")
 
 # Configurar CORS
 app.add_middleware(

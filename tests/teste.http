@@ -9,9 +9,9 @@ X-API-Key: {{apiKey}}
 
 {
     "repositorio": "octocat/Spoon-Knife",
-    "issues_limit": 50,
-    "prs_limit": 100,
-    "commits_limit": 100
+    "issues_limit": 10,
+    "prs_limit": 10,
+    "commits_limit": 10
 }
 
 ### 2. Testar Consulta RAG (O TCC em ação!)
