@@ -1,4 +1,5 @@
 # CÓDIGO COMPLETO PARA: app/main.py
+# (Com o novo endpoint /api/relatorio/download/{filename} adicionado)
 
 from dotenv import load_dotenv
 load_dotenv() # Garante que o .env seja lido
@@ -16,6 +17,12 @@ import redis
 from rq import Queue
 from app.services.ingest_service import ingest_repo # Importamos a função de ingestão
 # -----------------------------------------------
+
+# --- INÍCIO DAS ADIÇÕES PARA DOWNLOAD DE RELATÓRIO ---
+import io
+from fastapi.responses import StreamingResponse
+from supabase import create_client
+# --- FIM DAS ADIÇÕES PARA DOWNLOAD DE RELATÓRIO ---
 
 # Importações de serviços existentes
 from app.services.rag_service import gerar_resposta_rag
@@ -66,9 +73,9 @@ class RelatorioRequest(BaseModel):
 
 class IngestRequest(BaseModel):
     repositorio: str
-    issues_limit: Optional[int] = 20  # O padrão é 20
-    prs_limit: Optional[int] = 10      # O padrão é 10
-    commits_limit: Optional[int] = 15  # O padrão é 15
+    issues_limit: Optional[int] = 20
+    prs_limit: Optional[int] = 10
+    commits_limit: Optional[int] = 15
 
 class ConsultaResponse(BaseModel):
     resposta: str
@@ -98,7 +105,6 @@ async def verificar_token(x_api_key: str = Header(...)):
 async def health_check():
     """Verifica se a API está online."""
     try:
-        # Testa a conexão com o Redis também
         conn.ping()
         redis_status = "conectado"
     except Exception as e:
@@ -120,13 +126,9 @@ async def test_route():
 async def consultar(request: ConsultaRequest):
     """
     Recebe uma consulta, busca o contexto no RAG e retorna a resposta da IA.
-    (Esta rota não muda, ela continua síncrona e rápida)
     """
     try:
         resultado = gerar_resposta_rag(request.query, request.repositorio)
-        
-        # --- INÍCIO DA CORREÇÃO ---
-        # A linha que substituía '/' por '_' foi removida.
         
         return {
             "resposta": resultado["texto"],
@@ -134,7 +136,6 @@ async def consultar(request: ConsultaRequest):
                 {
                     "tipo": "repositório",
                     "id": "contexto",
-                    # Usamos 'request.repositorio' diretamente para a URL correta
                     "url": f"https://github.com/{request.repositorio}" 
                 }
             ],
@@ -157,20 +158,17 @@ async def gerar_relatorio_async(request: RelatorioRequest):
         raise HTTPException(status_code=400, detail="Campos 'repositorio' e 'prompt' são obrigatórios")
 
     try:
-        # Enfileira a tarefa na nova fila 'reports'
-        # Passa os argumentos para a função 'processar_e_salvar_relatorio'
         job = q_reports.enqueue(
             processar_e_salvar_relatorio, 
             repo, 
             prompt,
             request.formato,
-            job_timeout=1800  # 30 minutos de timeout para a LLM
+            job_timeout=1800
         )
 
         msg = f"Solicitação de relatório para {repo} recebida e enfileirada."
         print(f"[SUCESSO] {msg} Job ID: {job.id}")
 
-        # Reutiliza o 'IngestResponse' que já espera uma mensagem e job_id
         return {"mensagem": msg, "job_id": job.id}
 
     except Exception as e:
@@ -186,11 +184,8 @@ async def consultar_arquivo(
     """
     Recebe uma consulta via UPLOAD DE ARQUIVO, busca o contexto no RAG
     e retorna a resposta da IA.
-    
-    Para funcionar, o frontend deve enviar dados 'multipart/form-data'.
     """
     
-    # 1. Validação básica do arquivo
     if not arquivo:
         raise HTTPException(status_code=400, detail="Nenhum arquivo enviado.")
         
@@ -199,11 +194,8 @@ async def consultar_arquivo(
         raise HTTPException(status_code=400, detail="Tipo de arquivo inválido. Envie .txt ou .md.")
 
     try:
-        # 2. Ler o conteúdo do arquivo
-        # await arquivo.read() lê o arquivo em bytes
         conteudo_bytes = await arquivo.read()
         
-        # 3. Decodificar os bytes para uma string (assumindo UTF-8)
         try:
             query_do_arquivo = conteudo_bytes.decode("utf-8")
         except UnicodeDecodeError:
@@ -214,12 +206,8 @@ async def consultar_arquivo(
 
         print(f"[API] Consulta recebida via arquivo: {arquivo.filename}")
 
-        # 4. Chamar o serviço RAG (exatamente como a outra rota faz)
-        # O 'gerar_resposta_rag' não precisa mudar, ele só quer uma string!
         resultado = gerar_resposta_rag(query_do_arquivo, repositorio)
         
-        # 5. Retornar a resposta (código idêntico ao de /api/consultar)
-        # (Já inclui a correção do link do GitHub que fizemos)
         return {
             "resposta": resultado["texto"],
             "fontes": [
@@ -234,10 +222,8 @@ async def consultar_arquivo(
         
     except Exception as e:
         print(f"Erro em /api/consultar_arquivo: {repr(e)}")
-        # Garante que o traceback não vaze, mas dá o erro
         raise HTTPException(status_code=500, detail=f"Erro ao processar arquivo: {repr(e)}")
 
-# --- ROTA MODIFICADA (Parte 3) ---
 @app.post("/api/ingest", response_model=IngestResponse, dependencies=[Depends(verificar_token)])
 async def ingestar(dados: IngestRequest):
     """
@@ -248,14 +234,13 @@ async def ingestar(dados: IngestRequest):
         raise HTTPException(status_code=400, detail="Campo 'repositorio' é obrigatório")
 
     try:
-    # Agora passamos os limites para a função que será enfileirada
         job = q.enqueue(
             ingest_repo, 
             repo, 
             dados.issues_limit, 
             dados.prs_limit, 
             dados.commits_limit,
-            job_timeout=1200  # <--- INFORMA À FILA: "Esta tarefa pode levar 10 minutos"
+            job_timeout=1200
 )
 
         msg = f"Solicitação de ingestão para {repo} recebida e enfileirada."
@@ -276,7 +261,6 @@ async def get_job_status(job_id: str):
     """
     print(f"[API] Verificando status do Job ID: {job_id}")
     try:
-        # Pega a fila 'ingest' (a mesma que o worker usa)
         job = q.fetch_job(job_id)
     except Exception as e:
         print(f"[API] Erro ao buscar job (Redis?): {e}")
@@ -297,7 +281,6 @@ async def get_job_status(job_id: str):
         error_info = str(job.exc_info)
         print(f"[API] Job {job_id} falhou. Erro: {error_info}")
     
-    # Retorna o status (pode ser 'queued', 'started', 'finished', 'failed')
     return {"status": status, "result": result, "error": error_info}
 
 @app.get("/api/relatorio/status/{job_id}", dependencies=[Depends(verificar_token)])
@@ -307,7 +290,6 @@ async def get_report_job_status(job_id: str):
     """
     print(f"[API] Verificando status do Job de Relatório ID: {job_id}")
     try:
-        # Pega da fila 'reports' (q_reports)
         job = q_reports.fetch_job(job_id)
     except Exception as e:
         print(f"[API] Erro ao buscar job de relatório (Redis?): {e}")
@@ -315,7 +297,6 @@ async def get_report_job_status(job_id: str):
 
     if job is None:
         print(f"[API] Job de Relatório {job_id} não encontrado.")
-        # Retorna 404 (como o seu log mostrou) se o job não for encontrado
         return {"status": "not_found"}
 
     status = job.get_status()
@@ -329,8 +310,56 @@ async def get_report_job_status(job_id: str):
         error_info = str(job.exc_info)
         print(f"[API] Job de Relatório {job_id} falhou. Erro: {error_info}")
     
-    # Retorna o status (pode ser 'queued', 'started', 'finished', 'failed')
     return {"status": status, "result": result, "error": error_info}
+
+
+# --- INÍCIO DA NOVA ROTA DE DOWNLOAD ---
+
+@app.get("/api/relatorio/download/{filename}", dependencies=[Depends(verificar_token)])
+async def download_report(filename: str):
+    """
+    Baixa um arquivo de relatório do Supabase Storage e o transmite
+    ao usuário, forçando o download.
+    """
+    SUPABASE_BUCKET_NAME = "reports"
+    
+    try:
+        # 1. Inicializa o cliente storage
+        url = os.getenv('SUPABASE_URL')
+        key = os.getenv('SUPABASE_KEY')
+        if not url or not key:
+            raise Exception("Credenciais Supabase não encontradas no servidor")
+            
+        client = create_client(url, key)
+        
+        print(f"[API-DOWNLOAD] Usuário solicitou download de: {filename}")
+
+        # 2. Baixa o arquivo do Supabase (em memória)
+        file_bytes = client.storage.from_(SUPABASE_BUCKET_NAME).download(filename)
+        
+        if not file_bytes:
+            raise HTTPException(status_code=404, detail="Arquivo de relatório não encontrado no storage.")
+
+        print(f"[API-DOWNLOAD] Arquivo encontrado. Transmitindo para o usuário...")
+
+        # 3. Define os cabeçalhos para FORÇAR o download
+        headers = {
+            'Content-Disposition': f'attachment; filename="{filename}"'
+        }
+
+        # 4. Retorna o arquivo como um stream
+        return StreamingResponse(
+            io.BytesIO(file_bytes),
+            media_type='text/html', # Força o tipo correto
+            headers=headers
+        )
+
+    except Exception as e:
+        print(f"[API-DOWNLOAD] Erro ao baixar o arquivo: {repr(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro ao processar download do relatório: {repr(e)}")
+
+# --- FIM DA NOVA ROTA DE DOWNLOAD ---
+
 
 # Ponto de entrada para execução direta (testes locais)
 if __name__ == "__main__":
