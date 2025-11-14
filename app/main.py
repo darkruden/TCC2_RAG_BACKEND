@@ -27,7 +27,8 @@ conn = redis.from_url(redis_url)
 
 # 'ingest' é o nome da fila que nosso worker.py está escutando
 q = Queue('ingest', connection=conn) 
-# -----------------------------------------------
+
+q_reports = Queue('reports', connection=conn)
 
 metadata_service_relatorio = MetadataService()
 llm_service_relatorio = LLMService()
