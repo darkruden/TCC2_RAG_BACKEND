@@ -1,4 +1,4 @@
-# CÓDIGO FINAL (revertendo BytesIO) PARA: app/services/report_service.py
+# CÓDIGO FINAL (usando /tmp para salvar) PARA: app/services/report_service.py
 
 import os
 import markdown
@@ -7,9 +7,9 @@ from supabase import create_client, Client
 from typing import Dict, Any, Tuple
 from .metadata_service import MetadataService
 from .llm_service import LLMService
-# NÃO precisamos mais do 'import io'
+# Não precisamos mais de 'io'
 
-# --- SERVIÇO DE ARMAZENAMENTO SUPABASE ---
+# --- SERVIÇO DE ARMAZENAMENTO SUPABASE (MÉTODO CORRIGIDO) ---
 
 class SupabaseStorageService:
     """
@@ -27,25 +27,34 @@ class SupabaseStorageService:
     def upload_file_content(self, content_string: str, filename: str, bucket_name: str, content_type: str = 'text/html'):
         """
         Faz upload de um CONTEÚDO (string) para o Supabase Storage.
+        
+        MÉTODO: Salva o arquivo temporariamente no disco do Dyno
+        para forçar o 'supabase-py' a adivinhar o Content-Type corretamente.
         """
-        try:
-            # --- INÍCIO DA CORREÇÃO ---
-            # 1. Codifica a string para bytes
-            content_bytes = content_string.encode('utf-8')
+        
+        # Define um caminho de arquivo temporário no Heroku
+        # (O diretório /tmp é um dos únicos lugares onde podemos escrever)
+        temp_filepath = os.path.join("/tmp", filename) 
 
-            # 2. Define as opções em camelCase
+        try:
+            # 1. Salva o conteúdo HTML no arquivo temporário
+            with open(temp_filepath, 'w', encoding='utf-8') as f:
+                f.write(content_string)
+
+            # 2. Define as opções em camelCase (para garantir)
             file_opts = {
                 "contentType": content_type,
                 "cacheControl": "3600",
                 "upsert": "true"
             }
-            # --- FIM DA CORREÇÃO ---
             
-            self.client.storage.from_(bucket_name).upload(
-                path=filename,
-                file=content_bytes, # <-- Passa os bytes crus, NÃO o BytesIO
-                file_options=file_opts 
-            )
+            # 3. Faz o upload do ARQUIVO (não mais dos bytes)
+            with open(temp_filepath, 'rb') as f_read:
+                self.client.storage.from_(bucket_name).upload(
+                    path=filename,
+                    file=f_read, # <-- Passa o objeto do arquivo
+                    file_options=file_opts 
+                )
             
             public_url = self.client.storage.from_(bucket_name).get_public_url(filename)
             return public_url
@@ -53,6 +62,10 @@ class SupabaseStorageService:
         except Exception as e:
             print(f"[SUPABASE_SERVICE] Erro ao fazer upload para o Supabase: {repr(e)}")
             raise
+        finally:
+            # 4. Limpa: Remove o arquivo temporário, não importa o que aconteça
+            if os.path.exists(temp_filepath):
+                os.remove(temp_filepath)
 
 # -------------------------------------------------------------------------
 # O RESTANTE DO ARQUIVO ESTÁ CORRETO E NÃO MUDOU
@@ -132,14 +145,14 @@ class ReportService:
         
     </main>
     
-    <script src="https://cdn.jsdelivr.npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script>
         mermaid.initialize({{ startOnLoad: true, theme: 'neutral' }});
     </script>
 </body>
 </html>
         """
-
+        
         unique_id = str(uuid.uuid4()).split('-')[0]
         filename = f"{repo_name.replace('/', '_')}_report_{unique_id}.html"
         
