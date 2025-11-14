@@ -1,3 +1,6 @@
+# CÓDIGO COMPLETO E CORRIGIDO PARA: app/services/llm_service.py
+# (Instrui a LLM a usar 'pie' charts em vez de 'graph TD')
+
 import os
 import json
 from openai import OpenAI
@@ -24,7 +27,6 @@ class LLMService:
         self.model = model
         self.client = OpenAI(api_key=self.api_key)
         
-        # Contador para monitoramento de uso
         self.token_usage = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
@@ -34,23 +36,9 @@ class LLMService:
     def generate_response(self, query: str, context: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Gera uma resposta contextual usando o LLM.
-        
-        Args:
-            query: Consulta do usuário
-            context: Lista de documentos de contexto (já contém metadados)
-            
-        Returns:
-            Resposta gerada e informações de uso
+        (Esta função permanece inalterada)
         """
-        # Formatar contexto para o prompt (Sua função _format_context já faz isso bem)
         formatted_context = self._format_context(context)
-        
-        # --- INÍCIO DA CORREÇÃO ---
-        # Instruções de prompt muito mais detalhadas
-        
-        # (Dentro da função generate_response)
-        
-        # (Dentro da função generate_response)
         
         system_prompt = """
 Você é um assistente de engenharia de software de elite. Sua especialidade é 
@@ -85,20 +73,16 @@ EXEMPLO DE FORMATAÇÃO INCORRETA (NUNCA FAÇA ISSO):
         TODAS as regras do seu prompt de sistema.
         """
         
-        # --- FIM DA CORREÇÃO ---
-        
-        # Chamar a API da OpenAI
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=0.3, # Mantemos a temperatura baixa para respostas factuais
+            temperature=0.3,
             max_tokens=1000
         )
         
-        # Atualizar contadores de uso
         usage = response.usage
         self.token_usage["prompt_tokens"] += usage.prompt_tokens
         self.token_usage["completion_tokens"] += usage.completion_tokens
@@ -118,19 +102,12 @@ EXEMPLO DE FORMATAÇÃO INCORRETA (NUNCA FAÇA ISSO):
         Gera um relatório de análise de dados (analytics) com base
         em um prompt do usuário e dados brutos do SQL.
         Instrui o modelo a gerar gráficos usando Mermaid.js.
-        
-        Args:
-            repo_name: Nome do repositório
-            user_prompt: A pergunta do usuário (ex: "quem mais commita?")
-            raw_data: Uma lista de dicionários (metadados) do MetadataService
-            
-        Returns:
-            Relatório completo em formato Markdown
         """
         
-        # Converte a lista de dados brutos em uma string JSON compacta
-        # Isso é muito mais eficiente para a LLM processar do que texto puro.
         context_json_string = json.dumps(raw_data)
+        
+        # --- INÍCIO DA CORREÇÃO ---
+        # Alterado o system_prompt para exigir 'pie' chart
         
         system_prompt = f"""
 Você é um analista de dados e engenheiro de software de elite, 
@@ -143,26 +120,21 @@ REGRAS OBRIGATÓRIAS:
 2.  **Seja Analítico:** Não apenas liste dados, gere *insights* que 
     respondam diretamente ao prompt do usuário.
 3.  **Use os Dados:** Baseie sua análise APENAS nos dados JSON fornecidos.
-4.  **GRÁFICOS (Regra mais importante):** Para melhorar a experiência visual,
-    você DEVE gerar gráficos usando a sintaxe Mermaid.js sempre que 
-    uma visualização for apropriada (ex: gráficos de barras, pizza, etc.).
+4.  **GRÁFICOS (Regra mais importante):** Para visualização de dados 
+    (como contagem de commits por autor), você DEVE gerar um 
+    GRÁFICO DE PIZZA (pie chart) usando a sintaxe 'pie' do Mermaid.
     
-    Exemplo de Gráfico de Barras Mermaid:
-    ```mermaid
-    graph TD
-        A[Cassiano: 15 commits] --> B(João: 10 commits)
-        A --> C(Maria: 5 commits)
-    end
-    ```
+    NÃO USE 'graph TD'. Use APENAS a sintaxe 'pie'.
 
-    Exemplo de Gráfico de Pizza Mermaid:
+    Exemplo OBRIGATÓRIO de Gráfico de Pizza:
     ```mermaid
-    pie title Commits por Autor
-        "Cassiano" : 15
-        "João" : 10
-        "Maria" : 5
+    pie title Contribuições por Autor
+        "Autor A": 30
+        "Autor B": 10
+        "Autor C": 3
     ```
 """
+        # --- FIM DA CORREÇÃO ---
         
         final_user_prompt = f"""
 Contexto do Repositório: {repo_name}
@@ -176,21 +148,19 @@ Dados Brutos (JSON):
 ---
 
 Gere um relatório completo em Markdown que responda ao prompt do usuário,
-usando os dados brutos e incluindo gráficos Mermaid.js.
+usando os dados brutos e incluindo um gráfico de pizza (pie chart) Mermaid.js.
 """
         
-        # Chamar a API da OpenAI
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": final_user_prompt}
             ],
-            temperature=0.3, # Baixa temperatura para análise factual
-            max_tokens=4000  # Aumentamos os tokens para relatórios longos
+            temperature=0.3,
+            max_tokens=4000
         )
         
-        # Atualizar contadores de uso
         usage = response.usage
         self.token_usage["prompt_tokens"] += usage.prompt_tokens
         self.token_usage["completion_tokens"] += usage.completion_tokens
@@ -201,21 +171,13 @@ usando os dados brutos e incluindo gráficos Mermaid.js.
     def get_token_usage(self) -> Dict[str, int]:
         """
         Retorna estatísticas de uso de tokens.
-        
-        Returns:
-            Dicionário com contagem de tokens
         """
         return self.token_usage
     
     def _format_context(self, context: List[Dict[str, Any]]) -> str:
         """
         Formata o contexto para inclusão no prompt.
-        
-        Args:
-            context: Lista de documentos de contexto
-            
-        Returns:
-            Contexto formatado como string
+        (Esta função permanece inalterada)
         """
         formatted = ""
         
@@ -237,7 +199,7 @@ usando os dados brutos e incluindo gráficos Mermaid.js.
             
             elif doc_type == "commit":
                 formatted += f"Commit {doc.get('metadata', {}).get('sha', '')[:7]}\n"
-                formatted += f"URL: {doc.get('metadata', {}).get('url', '')}\n"  # <-- LINHA ADICIONADA
+                formatted += f"URL: {doc.get('metadata', {}).get('url', '')}\n"
                 formatted += f"Autor: {doc.get('metadata', {}).get('author', '')}\n"
                 formatted += f"Data: {doc.get('metadata', {}).get('date', '')}\n"
                 formatted += f"Mensagem: {doc.get('text', '')}\n\n"
@@ -250,12 +212,7 @@ usando os dados brutos e incluindo gráficos Mermaid.js.
     def _format_requirements_data(self, requirements_data: List[Dict[str, Any]]) -> str:
         """
         Formata os dados dos requisitos para inclusão no prompt.
-        
-        Args:
-            requirements_data: Lista de dados dos requisitos
-            
-        Returns:
-            Dados formatados como string
+        (Esta função permanece inalterada)
         """
         formatted = ""
         
@@ -263,19 +220,16 @@ usando os dados brutos e incluindo gráficos Mermaid.js.
             formatted += f"Requisito {i+1}: {req.get('title', '')}\n"
             formatted += f"Descrição: {req.get('description', '')}\n"
             
-            # Adicionar issues relacionadas
             if "issues" in req and req["issues"]:
                 formatted += "Issues relacionadas:\n"
                 for issue in req["issues"]:
                     formatted += f"- Issue #{issue.get('id')}: {issue.get('title')}\n"
             
-            # Adicionar PRs relacionados
             if "pull_requests" in req and req["pull_requests"]:
                 formatted += "Pull Requests relacionados:\n"
                 for pr in req["pull_requests"]:
                     formatted += f"- PR #{pr.get('id')}: {pr.get('title')}\n"
             
-            # Adicionar commits relacionados
             if "commits" in req and req["commits"]:
                 formatted += "Commits relacionados:\n"
                 for commit in req["commits"]:
