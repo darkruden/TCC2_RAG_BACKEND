@@ -2,13 +2,14 @@
 
 from dotenv import load_dotenv
 load_dotenv() # Garante que o .env seja lido
-
+from app.services.report_service import processar_e_salvar_relatorio
 from fastapi import FastAPI, Depends, HTTPException, status, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import os
-
+from app.services.metadata_service import MetadataService
+from app.services.llm_service import LLMService
 # --- INÍCIO DAS NOVAS ADIÇÕES (Parte 3) ---
 import redis
 from rq import Queue
@@ -28,6 +29,9 @@ conn = redis.from_url(redis_url)
 q = Queue('ingest', connection=conn) 
 # -----------------------------------------------
 
+metadata_service_relatorio = MetadataService()
+llm_service_relatorio = LLMService()
+report_service_relatorio = ReportService()
 
 # Inicializar aplicação FastAPI
 app = FastAPI(
@@ -54,7 +58,8 @@ class ConsultaRequest(BaseModel):
 class RelatorioRequest(BaseModel):
     repositorio: str
     requisitos: Optional[List[str]] = None
-    formato: str = "markdown"
+    prompt: str
+    formato: str = "html"
 
 class IngestRequest(BaseModel):
     repositorio: str
@@ -117,8 +122,8 @@ async def consultar(request: ConsultaRequest):
     try:
         resultado = gerar_resposta_rag(request.query, request.repositorio)
         
-        # Sanitiza o nome do repositório para a URL de fontes
-        repo_url_name = request.repositorio.replace('/', '_')
+        # --- INÍCIO DA CORREÇÃO ---
+        # A linha que substituía '/' por '_' foi removida.
         
         return {
             "resposta": resultado["texto"],
@@ -126,7 +131,8 @@ async def consultar(request: ConsultaRequest):
                 {
                     "tipo": "repositório",
                     "id": "contexto",
-                    "url": f"https://github.com/{repo_url_name}"
+                    # Usamos 'request.repositorio' diretamente para a URL correta
+                    "url": f"https://github.com/{request.repositorio}" 
                 }
             ],
             "contexto": {"trechos": resultado["contexto"]}
@@ -136,33 +142,97 @@ async def consultar(request: ConsultaRequest):
         raise HTTPException(status_code=500, detail=f"Erro ao processar consulta RAG: {repr(e)}")
 
 
-@app.post("/api/relatorio", response_model=RelatorioResponse, dependencies=[Depends(verificar_token)])
-async def gerar_relatorio(request: RelatorioRequest):
+@app.post("/api/relatorio", response_model=IngestResponse, dependencies=[Depends(verificar_token)])
+async def gerar_relatorio_async(request: RelatorioRequest):
     """
-    Gera um relatório (atualmente apenas Markdown).
-    (Esta rota não muda)
+    Recebe um prompt, ENFILEIRA a tarefa de geração de relatório
+    e retorna IMEDIATAMENTE.
     """
-    service = ReportService()
-    try:
-        # (Simulando a busca de dados e geração de conteúdo)
-        content = f"# Relatório para {request.repositorio}\n\n"
-        content += "Este é um relatório de exemplo.\n"
-        
-        resultado = service.generate_report(
-            request.repositorio, 
-            content, 
-            request.formato
-        )
-        
-        # (Em um app real, retornaríamos uma URL pública, não um caminho de arquivo)
-        return {
-            "url": f"/reports/{resultado['filename']}", # Simulação
-            "formato": resultado["format"]
-        }
-    except Exception as e:
-        print(f"Erro em /api/relatorio: {repr(e)}")
-        raise HTTPException(status_code=500, detail=f"Erro ao gerar relatório: {repr(e)}")
+    repo = request.repositorio
+    prompt = request.prompt
+    if not repo or not prompt:
+        raise HTTPException(status_code=400, detail="Campos 'repositorio' e 'prompt' são obrigatórios")
 
+    try:
+        # Enfileira a tarefa na nova fila 'reports'
+        # Passa os argumentos para a função 'processar_e_salvar_relatorio'
+        job = q_reports.enqueue(
+            processar_e_salvar_relatorio, 
+            repo, 
+            prompt,
+            request.formato,
+            job_timeout=1800  # 30 minutos de timeout para a LLM
+        )
+
+        msg = f"Solicitação de relatório para {repo} recebida e enfileirada."
+        print(f"[SUCESSO] {msg} Job ID: {job.id}")
+
+        # Reutiliza o 'IngestResponse' que já espera uma mensagem e job_id
+        return {"mensagem": msg, "job_id": job.id}
+
+    except Exception as e:
+        error_message = repr(e) 
+        print(f"Erro DETALHADO ao enfileirar relatório de {repo}: {error_message}")
+        raise HTTPException(status_code=500, detail=f"Erro ao enfileirar tarefa de relatório: {error_message}")
+
+@app.post("/api/consultar_arquivo", response_model=ConsultaResponse, dependencies=[Depends(verificar_token)])
+async def consultar_arquivo(
+    repositorio: str = Form(...),
+    arquivo: UploadFile = File(...)
+):
+    """
+    Recebe uma consulta via UPLOAD DE ARQUIVO, busca o contexto no RAG
+    e retorna a resposta da IA.
+    
+    Para funcionar, o frontend deve enviar dados 'multipart/form-data'.
+    """
+    
+    # 1. Validação básica do arquivo
+    if not arquivo:
+        raise HTTPException(status_code=400, detail="Nenhum arquivo enviado.")
+        
+    if arquivo.content_type not in ["text/plain", "text/markdown", "application/octet-stream"]:
+        print(f"[API] Tipo de arquivo rejeitado: {arquivo.content_type}")
+        raise HTTPException(status_code=400, detail="Tipo de arquivo inválido. Envie .txt ou .md.")
+
+    try:
+        # 2. Ler o conteúdo do arquivo
+        # await arquivo.read() lê o arquivo em bytes
+        conteudo_bytes = await arquivo.read()
+        
+        # 3. Decodificar os bytes para uma string (assumindo UTF-8)
+        try:
+            query_do_arquivo = conteudo_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=400, detail="Não foi possível decodificar o arquivo. Certifique-se de que está em UTF-8.")
+
+        if not query_do_arquivo.strip():
+             raise HTTPException(status_code=400, detail="O arquivo enviado está vazio.")
+
+        print(f"[API] Consulta recebida via arquivo: {arquivo.filename}")
+
+        # 4. Chamar o serviço RAG (exatamente como a outra rota faz)
+        # O 'gerar_resposta_rag' não precisa mudar, ele só quer uma string!
+        resultado = gerar_resposta_rag(query_do_arquivo, repositorio)
+        
+        # 5. Retornar a resposta (código idêntico ao de /api/consultar)
+        # (Já inclui a correção do link do GitHub que fizemos)
+        return {
+            "resposta": resultado["texto"],
+            "fontes": [
+                {
+                    "tipo": "repositório",
+                    "id": "contexto",
+                    "url": f"https://github.com/{repositorio}"
+                }
+            ],
+            "contexto": {"trechos": resultado["contexto"]}
+        }
+        
+    except Exception as e:
+        print(f"Erro em /api/consultar_arquivo: {repr(e)}")
+        # Garante que o traceback não vaze, mas dá o erro
+        raise HTTPException(status_code=500, detail=f"Erro ao processar arquivo: {repr(e)}")
 
 # --- ROTA MODIFICADA (Parte 3) ---
 @app.post("/api/ingest", response_model=IngestResponse, dependencies=[Depends(verificar_token)])

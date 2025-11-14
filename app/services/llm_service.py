@@ -112,51 +112,81 @@ EXEMPLO DE FORMATAÇÃO INCORRETA (NUNCA FAÇA ISSO):
             }
         }
     
-    def generate_report(self, repo_name: str, requirements_data: List[Dict[str, Any]]) -> str:
+    def generate_analytics_report(self, repo_name: str, user_prompt: str, raw_data: List[Dict[str, Any]]) -> str:
         """
-        Gera um relatório de requisitos em formato Markdown.
+        Gera um relatório de análise de dados (analytics) com base
+        em um prompt do usuário e dados brutos do SQL.
+        Instrui o modelo a gerar gráficos usando Mermaid.js.
         
         Args:
             repo_name: Nome do repositório
-            requirements_data: Dados dos requisitos e suas relações
+            user_prompt: A pergunta do usuário (ex: "quem mais commita?")
+            raw_data: Uma lista de dicionários (metadados) do MetadataService
             
         Returns:
-            Relatório em formato Markdown
-        """
-        # Formatar dados dos requisitos para o prompt
-        formatted_data = self._format_requirements_data(requirements_data)
-        
-        system_prompt = """
-        Você é um especialista em engenharia de requisitos de software.
-        Sua tarefa é gerar um relatório detalhado sobre requisitos de software com base nos dados fornecidos.
-        O relatório deve ser bem estruturado, em formato Markdown, e incluir:
-        
-        1. Um resumo executivo dos requisitos
-        2. Uma análise detalhada de cada requisito
-        3. Relações entre requisitos, issues, pull requests e commits
-        4. Recomendações para melhorias na documentação e rastreabilidade
-        
-        Use formatação Markdown para criar um documento bem estruturado e legível.
+            Relatório completo em formato Markdown
         """
         
-        user_prompt = f"""
-        Gere um relatório completo de requisitos para o repositório: {repo_name}
+        # Converte a lista de dados brutos em uma string JSON compacta
+        # Isso é muito mais eficiente para a LLM processar do que texto puro.
+        context_json_string = json.dumps(raw_data)
         
-        Dados dos requisitos:
-        {formatted_data}
+        system_prompt = f"""
+Você é um analista de dados e engenheiro de software de elite, 
+especializado em analisar repositórios GitHub.
+Sua tarefa é responder a uma pergunta do usuário (prompt) usando um 
+conjunto de dados brutos (em JSON) fornecido.
+
+REGRAS OBRIGATÓRIAS:
+1.  **Formato:** O relatório final DEVE ser em Markdown.
+2.  **Seja Analítico:** Não apenas liste dados, gere *insights* que 
+    respondam diretamente ao prompt do usuário.
+3.  **Use os Dados:** Baseie sua análise APENAS nos dados JSON fornecidos.
+4.  **GRÁFICOS (Regra mais importante):** Para melhorar a experiência visual,
+    você DEVE gerar gráficos usando a sintaxe Mermaid.js sempre que 
+    uma visualização for apropriada (ex: gráficos de barras, pizza, etc.).
+    
+    Exemplo de Gráfico de Barras Mermaid:
+    ```mermaid
+    graph TD
+        A[Cassiano: 15 commits] --> B(João: 10 commits)
+        A --> C(Maria: 5 commits)
+    end
+    ```
+
+    Exemplo de Gráfico de Pizza Mermaid:
+    ```mermaid
+    pie title Commits por Autor
+        "Cassiano" : 15
+        "João" : 10
+        "Maria" : 5
+    ```
+"""
         
-        O relatório deve seguir a estrutura mencionada e incluir todos os detalhes relevantes dos dados fornecidos.
-        """
+        final_user_prompt = f"""
+Contexto do Repositório: {repo_name}
+
+Prompt do Usuário:
+"{user_prompt}"
+
+---
+Dados Brutos (JSON):
+{context_json_string}
+---
+
+Gere um relatório completo em Markdown que responda ao prompt do usuário,
+usando os dados brutos e incluindo gráficos Mermaid.js.
+"""
         
         # Chamar a API da OpenAI
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
+                {"role": "user", "content": final_user_prompt}
             ],
-            temperature=0.3,
-            max_tokens=2500
+            temperature=0.3, # Baixa temperatura para análise factual
+            max_tokens=4000  # Aumentamos os tokens para relatórios longos
         )
         
         # Atualizar contadores de uso

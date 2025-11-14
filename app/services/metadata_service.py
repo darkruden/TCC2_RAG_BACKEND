@@ -135,6 +135,38 @@ class MetadataService:
             return []
         finally:
             self.db.close()
+    def get_full_repo_analysis_data(self, repo_name: str) -> List[Dict[str, Any]]:
+            """
+            Busca TODOS os metadados de um repositório para análise completa.
+            """
+            print(f"[MetadataService] Buscando TODOS os dados do SQL para análise: {repo_name}")
+            try:
+                # Busca todos os documentos do repositório
+                results = self.db.query(Document).filter(
+                    Document.repo_name == repo_name
+                ).order_by(Document.created_at.desc()).all()
+                
+                if not results:
+                    return []
 
+                # Formata os dados em um JSON leve para a LLM analisar
+                analysis_data = []
+                for doc in results:
+                    analysis_data.append({
+                        "tipo": doc.doc_type,
+                        "id": doc.doc_id,
+                        "autor": doc.author,
+                        "data": doc.created_at.isoformat() if doc.created_at else None,
+                        "titulo": doc.title
+                        # Não incluímos 'text_content' para não sobrecarregar o prompt
+                    })
+                
+                return analysis_data
+                
+            except Exception as e:
+                print(f"[MetadataService] Erro ao buscar dados completos do SQL: {e}")
+                return []
+            finally:
+                self.db.close()
 # Chama init_db() quando o módulo é importado pela primeira vez
 init_db()

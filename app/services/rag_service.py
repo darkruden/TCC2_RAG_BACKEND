@@ -63,7 +63,8 @@ def gerar_resposta_rag(pergunta: str, repositorio: str):
             contexto_formatado = metadata_service.find_document_by_date(
                 repo_name=repositorio,
                 doc_type=entidade,
-                order=ordem
+                order=ordem,
+                limit=limite # <-- ...e agora passa-o para a função.
             )
 
         # Se não for cronológica, ou se a busca SQL falhar, usamos a busca semântica

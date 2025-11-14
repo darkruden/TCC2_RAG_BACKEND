@@ -9,7 +9,7 @@ from rq import SimpleWorker, Worker, Queue
 from app.services.ingest_service import ingest_repo
 
 # Define a fila que este trabalhador irá escutar
-listen = ['ingest']
+listen = ['ingest', 'reports']
 
 # Pega a URL do Redis (do Heroku Add-on ou do nosso localhost)
 redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
