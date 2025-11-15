@@ -13,6 +13,7 @@
 ./app/models
 ./app/services
 ./app/services/cache_service.py
+./app/services/email_service.py
 ./app/services/embedding_service.py
 ./app/services/github_service.py
 ./app/services/ingest_service.py
@@ -21,6 +22,7 @@
 ./app/services/rag_service.py
 ./app/services/report_service.py
 ./app/services/router_service.py
+./app/services/scheduler_service.py
 ./app/services/__init__.py
 ./app/services/__pycache__
 ./app/services/__pycache__/embedding_service.cpython-311.pyc
@@ -37,6 +39,7 @@
 ./app/__pycache__/__init__.cpython-311.pyc
 ./app.yaml
 ./arquivo de log.txt
+./check_schedules.py
 ./comandos recorrentes.txt
 ./Procfile
 ./requirements.txt
@@ -54,3 +57,4 @@
 ./tests/__pycache__
 ./tests/__pycache__/test_openai.cpython-311.pyc
 ./worker.py
+./worker_tasks.py
