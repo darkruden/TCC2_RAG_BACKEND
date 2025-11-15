@@ -1,5 +1,5 @@
 # CÓDIGO COMPLETO PARA: app/main.py
-# (Atualizado para usar 'RQ_QUEUE_PREFIX' e isolar as filas)
+# (Corrigido para expandir '...' e remover o TypeError)
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -20,10 +20,12 @@ from app.services.llm_service import LLMService
 from app.services.scheduler_service import create_schedule, verify_email_token
 
 # --- Tarefas do Worker ---
+# (Importa as tarefas do worker_tasks.py, como corrigido no passo anterior)
 from worker_tasks import (
     ingest_repo, 
     save_instruction, 
-    processar_e_salvar_relatorio
+    processar_e_salvar_relatorio,
+    process_webhook_payload # (Importação do Marco 6)
 )
 
 import hashlib
@@ -40,15 +42,12 @@ except Exception as e:
     print(f"[Main] ERRO CRÍTICO: Não foi possível conectar ao Redis em {redis_url}. {e}")
     conn = None
 
-# --- INÍCIO DA CORREÇÃO (Prefixo de Fila) ---
-# Lê o prefixo do ambiente (ex: 'test_'). Se não existir, usa '' (vazio).
+# Lê o prefixo (ex: 'test_')
 QUEUE_PREFIX = os.getenv('RQ_QUEUE_PREFIX', '')
 if QUEUE_PREFIX:
     print(f"[Main] Usando prefixo de fila: '{QUEUE_PREFIX}'")
-# --- FIM DA CORREÇÃO ---
 
 if conn:
-    # Adiciona o prefixo aos nomes das filas
     q_ingest = Queue(f'{QUEUE_PREFIX}ingest', connection=conn) 
     q_reports = Queue(f'{QUEUE_PREFIX}reports', connection=conn)
 else:
@@ -63,19 +62,63 @@ except Exception as e:
     print(f"[Main] ERRO: Falha ao inicializar LLMService: {e}")
     llm_service = None
 
-# (O resto do seu main.py permanece o mesmo)
-app = FastAPI(title="GitHub RAG API (v2 - Chat com Agendamento)")
-app.add_middleware(CORSMiddleware, ...)
+# Inicializar aplicação FastAPI
+app = FastAPI(
+    title="GitHub RAG API (v2 - Chat com Agendamento)",
+    description="API unificada para análise, rastreabilidade e relatórios agendados.",
+    version="0.3.0"
+)
 
-class ChatRequest(BaseModel): ...
-class ChatResponse(BaseModel): ...
-async def verificar_token(x_api_key: str = Header(...)): ...
-async def verify_github_signature(request: Request, x_hub_signature_256: str = Header(...)): ...
+# --- CORREÇÃO AQUI ---
+# O '...' foi removido e a configuração completa foi restaurada.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # Permite todas as origens
+    allow_credentials=True,
+    allow_methods=["*"], # Permite todos os métodos
+    allow_headers=["*"], # Permite todos os cabeçalhos
+)
+# --- FIM DA CORREÇÃO ---
 
-# --- Helper de Roteamento (Atualizado para checar 'conn') ---
+# --- Modelos de Dados Pydantic ---
+class ChatRequest(BaseModel):
+    prompt: str
+    user_email: Optional[str] = None 
+
+class ChatResponse(BaseModel):
+    response_type: str
+    message: str
+    job_id: Optional[str] = None
+    fontes: Optional[List[Dict[str, Any]]] = None
+    contexto: Optional[Dict[str, Any]] = None
+
+# --- Dependência de Segurança (Token API Padrão) ---
+async def verificar_token(x_api_key: str = Header(...)):
+    api_token = os.getenv("API_TOKEN")
+    if not api_token:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Token de API não configurado no servidor.")
+    if x_api_key != api_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token de API inválido")
+    return x_api_key
+
+# --- Dependência de Segurança (Webhook do GitHub) ---
+async def verify_github_signature(request: Request, x_hub_signature_256: str = Header(...)):
+    secret = os.getenv("GITHUB_WEBHOOK_SECRET")
+    if not secret:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="O servidor não está configurado para webhooks.")
+    try:
+        body = await request.body()
+        hash_obj = hmac.new(secret.encode('utf-8'), msg=body, digestmod=hashlib.sha256)
+        expected_signature = "sha256=" + hash_obj.hexdigest()
+        if not hmac.compare_digest(expected_signature, x_hub_signature_256):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Assinatura do webhook inválida.")
+        return body
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro ao processar assinatura do webhook.")
+
+# --- FUNÇÃO HELPER: Roteador de Intenção ---
 async def _route_intent(intent: str, args: Dict[str, Any], user_email: Optional[str] = None) -> Dict[str, Any]:
     
-    # Adiciona verificação se a conexão com a fila existe
     if not conn or not q_ingest or not q_reports:
         print("[ChatRouter] ERRO: Conexão com Redis (RQ) não está disponível.")
         return {"response_type": "error", "message": "Erro de servidor: O serviço de fila (Redis) está indisponível.", "job_id": None}
@@ -88,6 +131,7 @@ async def _route_intent(intent: str, args: Dict[str, Any], user_email: Optional[
             cached_result = conn.get(cache_key)
             if cached_result: return json.loads(cached_result)
         except Exception as e: print(f"[Cache] ERRO no Redis (GET): {e}")
+        
         resultado_rag = gerar_resposta_rag(prompt, repo)
         response_data = {
             "response_type": "answer", "message": resultado_rag["texto"], "job_id": None,
@@ -139,10 +183,7 @@ async def _route_intent(intent: str, args: Dict[str, Any], user_email: Optional[
         raise Exception(f"Intenção desconhecida recebida da LLM: {intent}")
 
 # --- Rotas da API (v2) ---
-# (O restante do main.py: /health, /api/chat, /api/chat_file, /api/webhook/github,
-#  /api/email/verify, /api/ingest/status, /api/relatorio/status, 
-#  /api/relatorio/download, e o __name__ == "__main__"
-#  permanecem EXATAMENTE IGUAIS ao arquivo anterior.)
+
 @app.get("/health")
 async def health_check():
     redis_status = "desconectado"
@@ -229,11 +270,30 @@ async def verify_email(token: str, email: str):
     try:
         sucesso = verify_email_token(email, token)
         if sucesso:
-            return """<html>...<h1>✅ Email Verificado com Sucesso!</h1>...</html>"""
+            return """
+            <html><head><title>Email Verificado</title><style>
+            body { font-family: Arial, sans-serif; display: grid; place-items: center; min-height: 90vh; background-color: #f4f4f4; }
+            div { text-align: center; padding: 40px; background-color: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+            h1 { color: #28a745; }
+            </style></head><body><div>
+            <h1>✅ Email Verificado com Sucesso!</h1>
+            <p>Seus relatórios agendados estão ativados. Você já pode fechar esta aba.</p>
+            </div></body></html>
+            """
         else:
-            return """<html>...<h1>❌ Falha na Verificação</h1>...</html>"""
+            return """
+            <html><head><title>Falha na Verificação</title><style>
+            body { font-family: Arial, sans-serif; display: grid; place-items: center; min-height: 90vh; background-color: #f4f4f4; }
+            div { text-align: center; padding: 40px; background-color: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+            h1 { color: #dc3545; }
+            </style></head><body><div>
+            <h1>❌ Falha na Verificação</h1>
+            <p>O link de verificação é inválido ou expirou.</p>
+            <p>Por favor, tente agendar o relatório novamente para receber um novo link.</p>
+            </div></body></html>
+            """
     except Exception as e:
-        return HTMLResponse(content=f"<h1>Erro 500</h1><p>Ocorreu um erro.</p>", status_code=500)
+        return HTMLResponse(content=f"<h1>Erro 500</h1><p>Ocorreu um erro no servidor.</p>", status_code=500)
 
 @app.get("/api/ingest/status/{job_id}", dependencies=[Depends(verificar_token)])
 async def get_job_status(job_id: str):
