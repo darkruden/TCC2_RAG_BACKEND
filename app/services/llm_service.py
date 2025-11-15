@@ -1,5 +1,5 @@
 # CÓDIGO COMPLETO PARA: app/services/llm_service.py
-# (Implementa a geração de relatórios com JSON do Chart.js)
+# (Atualizado com 'Tools' mais inteligentes para agendamento)
 
 import os
 import json
@@ -7,14 +7,7 @@ from openai import OpenAI
 from typing import List, Dict, Any, Optional
 
 class LLMService:
-    """
-    Serviço para integração com modelos de linguagem grandes (LLMs).
-    """
-    
     def __init__(self, api_key: str = None, model: str = "gpt-4o-mini"):
-        """
-        Inicializa o serviço LLM.
-        """
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
             raise ValueError("Chave da API OpenAI não fornecida")
@@ -28,7 +21,7 @@ class LLMService:
             "total_tokens": 0
         }
 
-        # Definição das Ferramentas para o Roteador de Intenção (Sem alterações)
+        # --- ATUALIZAÇÃO: Definição das Ferramentas para o Roteador de Intenção ---
         self.intent_tools = [
             {
                 "type": "function",
@@ -37,7 +30,12 @@ class LLMService:
                     "description": "Usado quando o usuário quer ingerir, re-ingerir ou indexar um repositório.",
                     "parameters": {
                         "type": "object",
-                        "properties": {"repositorio": {"type": "string", "description": "O nome do repositório no formato 'usuario/nome'."}},
+                        "properties": {
+                            "repositorio": {
+                                "type": "string",
+                                "description": "O nome do repositório no formato 'usuario/nome'.",
+                            }
+                        },
                         "required": ["repositorio"],
                     },
                 },
@@ -50,8 +48,14 @@ class LLMService:
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "repositorio": {"type": "string", "description": "O nome do repositório no formato 'usuario/nome'."},
-                            "prompt_usuario": {"type": "string", "description": "A pergunta específica do usuário."}
+                            "repositorio": {
+                                "type": "string",
+                                "description": "O nome do repositório no formato 'usuario/nome'.",
+                            },
+                            "prompt_usuario": {
+                                "type": "string",
+                                "description": "A pergunta específica do usuário.",
+                            }
                         },
                         "required": ["repositorio", "prompt_usuario"],
                     },
@@ -61,33 +65,61 @@ class LLMService:
                 "type": "function",
                 "function": {
                     "name": "call_report_tool",
-                    "description": "Usado quando o usuário pede explicitamente um 'relatório', 'gráfico' ou 'análise' para download.",
+                    "description": "Usado quando o usuário pede explicitamente um 'relatório', 'gráfico' ou 'análise' para download *imediato*.",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "repositorio": {"type": "string", "description": "O nome do repositório no formato 'usuario/nome'."},
-                            "prompt_usuario": {"type": "string", "description": "A instrução para o relatório (ex: 'gere um gráfico de pizza dos commits')."}
+                            "repositorio": {
+                                "type": "string",
+                                "description": "O nome do repositório no formato 'usuario/nome'.",
+                            },
+                            "prompt_usuario": {
+                                "type": "string",
+                                "description": "A instrução para o relatório (ex: 'gere um gráfico de pizza dos commits').",
+                            }
                         },
                         "required": ["repositorio", "prompt_usuario"],
                     },
                 },
             },
+            # --- FERRAMENTA DE AGENDAMENTO ATUALIZADA ---
             {
                 "type": "function",
                 "function": {
                     "name": "call_schedule_tool",
-                    "description": "Usado quando o usuário quer agendar um relatório para o futuro (ex: 'todo dia', 'às 17h').",
+                    "description": "Usado quando o usuário quer agendar um relatório para o futuro (ex: 'todo dia', 'semanalmente', 'às 17h').",
                     "parameters": {
                         "type": "object",
-                        "properties": {"instrucao_agendamento": {"type": "string", "description": "O prompt completo do usuário sobre o agendamento."}},
-                        "required": ["instrucao_agendamento"],
+                        "properties": {
+                            "repositorio": {
+                                "type": "string",
+                                "description": "O nome do repositório no formato 'usuario/nome'.",
+                            },
+                            "prompt_relatorio": {
+                                "type": "string",
+                                "description": "O que o relatório deve conter (ex: 'análise de commits da equipe').",
+                            },
+                            "frequencia": {
+                                "type": "string",
+                                "enum": ["daily", "weekly", "monthly"],
+                                "description": "A frequência do relatório. 'daily' para todo dia, 'weekly' para semanalmente.",
+                            },
+                            "hora": {
+                                "type": "string",
+                                "description": "A hora do dia para o envio, no formato HH:MM (24h).",
+                            },
+                            "timezone": {
+                                "type": "string",
+                                "description": "O fuso horário da solicitação (ex: 'America/Sao_Paulo', 'UTC').",
+                            }
+                        },
+                        "required": ["repositorio", "prompt_relatorio", "frequencia", "hora", "timezone"],
                     },
                 },
             },
         ]
 
     # --- FUNÇÃO (get_intent) ---
-    # (Sem alterações do Marco 2)
     def get_intent(self, user_query: str) -> Dict[str, Any]:
         """
         Usa a LLM e 'Tools' para classificar a intenção do usuário
@@ -97,7 +129,14 @@ class LLMService:
             raise Exception("LLMService não inicializado.")
             
         print(f"[LLMService] Classificando intenção para: '{user_query}'")
-        system_prompt = "Você é um roteador de API. Sua tarefa é analisar o prompt do usuário e chamar a ferramenta correta com os parâmetros corretos. Se o repositório não for mencionado, pergunte ao usuário."
+
+        # Adicionamos uma instrução sobre o fuso horário
+        system_prompt = f"""
+Você é um roteador de API. Sua tarefa é analisar o prompt do usuário e chamar a ferramenta correta.
+Se o usuário mencionar um fuso horário (ex: 'Brasília'), use a formatação IANA (ex: 'America/Sao_Paulo').
+Se nenhum fuso horário for mencionado, assuma 'America/Sao_Paulo'.
+A data atual (contexto) é: {datetime.now(pytz.utc).astimezone(pytz.timezone('America/Sao_Paulo')).isoformat()}
+"""
 
         try:
             response = self.client.chat.completions.create(
@@ -129,12 +168,11 @@ class LLMService:
             print(f"[LLMService] Erro CRÍTICO ao classificar intenção: {e}")
             raise Exception(f"Erro ao processar sua solicitação na LLM: {e}")
     
-    # --- FUNÇÃO (generate_response) ---
-    # (Sem alterações do Marco 2)
+    # --- FUNÇÕES (generate_response, generate_analytics_report, etc.) ---
+    # (O restante do arquivo 'llm_service.py' permanece 
+    #  exatamente como está no Marco 4, sem alterações)
+    # ... (copie o restante do seu arquivo llm_service.py aqui) ...
     def generate_response(self, query: str, context: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Gera uma resposta contextual usando o LLM.
-        """
         formatted_context = self._format_context(context)
         system_prompt = """
 Você é um assistente de engenharia de software de elite. Sua especialidade é 
@@ -178,21 +216,8 @@ REGRAS DE FORMATAÇÃO OBRIGATÓRIAS:
             }
         }
     
-    # --- FUNÇÃO (generate_analytics_report) ---
-    # --- MODIFICADA PARA O MARCO 4 ---
     def generate_analytics_report(self, repo_name: str, user_prompt: str, raw_data: List[Dict[str, Any]]) -> str:
-        """
-        Gera um relatório de análise de dados (analytics).
-        AGORA, retorna um OBJETO JSON contendo o Markdown da análise
-        e o JSON do gráfico (para Chart.js).
-        
-        Retorna:
-            Uma string JSON contendo {analysis_markdown: "...", chart_json: {...}}
-        """
-        
         context_json_string = json.dumps(raw_data)
-        
-        # O novo prompt de sistema que exige uma saída JSON
         system_prompt = f"""
 Você é um analista de dados e engenheiro de software de elite.
 Sua tarefa é responder a uma pergunta do usuário (prompt) usando um 
@@ -240,7 +265,6 @@ REGRAS OBRIGATÓRIAS:
     }}
     ```
 """
-        
         final_user_prompt = f"""
 Contexto do Repositório: {repo_name}
 Prompt do Usuário: "{user_prompt}"
@@ -248,37 +272,29 @@ Dados Brutos (JSON): {context_json_string}
 ---
 Gere a resposta em um único objeto JSON contendo as chaves "analysis_markdown" e "chart_json".
 """
-        
         try:
-            # Chamar a API da OpenAI com o modo JSON
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": final_user_prompt}
                 ],
-                response_format={"type": "json_object"}, # <-- Força a saída JSON
+                response_format={"type": "json_object"},
                 temperature=0.3,
                 max_tokens=4000
             )
-            
             usage = response.usage
             self.token_usage["prompt_tokens"] += usage.prompt_tokens
             self.token_usage["completion_tokens"] += usage.completion_tokens
             self.token_usage["total_tokens"] += usage.total_tokens
-            
-            # Retorna a string JSON completa
             return response.choices[0].message.content
-        
         except Exception as e:
             print(f"[LLMService] Erro ao gerar relatório JSON: {e}")
-            # Retorna um JSON de erro como fallback
             return json.dumps({
                 "analysis_markdown": f"# Erro\n\nNão foi possível gerar a análise: {e}",
                 "chart_json": None
             })
 
-    # --- Funções _format (Sem alterações) ---
     def get_token_usage(self) -> Dict[str, int]:
         return self.token_usage
     
