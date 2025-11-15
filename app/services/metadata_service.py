@@ -1,172 +1,126 @@
-# CÓDIGO COMPLETO PARA: app/services/metadata_service.py
+# app/services/metadata_service.py
 import os
-from sqlalchemy import create_engine, Column, String, Text, Integer, MetaData, Table, DateTime
-from sqlalchemy.engine.url import make_url
-from sqlalchemy.orm import sessionmaker, DeclarativeBase
+from supabase import create_client, Client
 from typing import List, Dict, Any
+from app.services.embedding_service import get_embedding, get_embeddings_batch
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError("Variável de ambiente DATABASE_URL não definida.")
-
-# --- INÍCIO DA CORREÇÃO (NameError) ---
-
-# 1. Define a variável 'db_url' a partir da string de conexão
-db_url = make_url(DATABASE_URL)
-
-# 2. Modifica a 'db_url' para adicionar o sslmode=require (necessário para o Supabase Pooler)
-# Esta é a linha que estava falhando antes porque a Linha 1 estava faltando.
-db_url = db_url.set(query={"sslmode": "require"})
-
-# 3. Cria o engine com a URL final e corrigida
-# reestabelecendo-a automaticamente se estiver morta.
-engine = create_engine(
-    db_url,
-    pool_pre_ping=True 
-)
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-class Base(DeclarativeBase):
-    pass
-
-# Nosso modelo de tabela de documentos
-class Document(Base):
-    __tablename__ = "documents"
+# Inicializa o cliente Supabase
+# (Ele usará as vars SUPABASE_URL e SUPABASE_KEY do Heroku [cite: 8])
+try:
+    url: str = os.getenv("SUPABASE_URL")
+    key: str = os.getenv("SUPABASE_KEY")
+    if not url or not key:
+        raise ValueError("SUPABASE_URL e SUPABASE_KEY são obrigatórios.")
     
-    id = Column(String, primary_key=True, index=True) # O ID do chunk (ex: "issue_123_chunk_0")
-    repo_name = Column(String, index=True, nullable=False)
-    doc_type = Column(String, index=True) # "issue", "commit", "pull_request"
-    doc_id = Column(String) # ID original (ex: "123" ou o SHA)
-    title = Column(Text)
-    text_content = Column(Text) # O texto completo do chunk
-    author = Column(String)
-    url = Column(String)
-    created_at = Column(DateTime, index=True) # A coluna crucial para ordenação
+    supabase: Client = create_client(url, key)
+    print("[MetadataService] Cliente Supabase inicializado.")
+    
+except Exception as e:
+    print(f"[MetadataService] Erro ao inicializar Supabase: {e}")
+    supabase = None
 
-def init_db():
-    """Cria a tabela no banco de dados se ela não existir."""
-    Base.metadata.create_all(bind=engine)
-
-class MetadataService:
+def save_documents_batch(documents: List[Dict[str, Any]]):
     """
-    Serviço para interagir com o banco de dados SQL de metadados.
+    Recebe uma lista de documentos, gera seus embeddings e os
+    salva na tabela 'documentos' do Supabase.
+    
+    'documents' deve ser uma lista de:
+    {
+        "repositorio": "user/repo",
+        "tipo": "commit",
+        "metadados": {"sha": "...", "autor": "...", "url": "..."},
+        "conteudo": "Mensagem do commit"
+    }
     """
-    def __init__(self):
-        self.db = SessionLocal()
-
-    def add_documents(self, documents: List[Dict[str, Any]]):
-        """
-        Adiciona ou atualiza metadados de documentos no banco SQL.
-        """
-        print(f"[MetadataService] Adicionando {len(documents)} metadados ao SQL DB...")
-        try:
-            for doc in documents:
-                meta = doc.get("metadata", {})
-                
-                # Cria o objeto Document com base nos metadados do chunk
-                db_doc = Document(
-                    id=doc.get("id"),
-                    repo_name=meta.get("repo_name"),
-                    doc_type=meta.get("type"),
-                    doc_id=str(meta.get("id") or meta.get("sha")),
-                    title=meta.get("title"),
-                    text_content=doc.get("text"), # Salvamos o texto aqui também
-                    author=meta.get("author"),
-                    url=meta.get("url"),
-                    created_at=meta.get("created_at") or meta.get("date") # Usa 'date' para commits
-                )
-                
-                # Faz um 'merge' (upsert)
-                self.db.merge(db_doc)
-            
-            self.db.commit()
-            print("[MetadataService] Metadados salvos no SQL DB com sucesso.")
-        except Exception as e:
-            self.db.rollback()
-            print(f"[MetadataService] Erro ao salvar no SQL DB: {e}")
-            raise
-        finally:
-            self.db.close()
-
-    def find_document_by_date(self, repo_name: str, doc_type: str, order: str = "desc", limit: int = 1) -> List[Dict[str, Any]]:
-        """
-        Busca N documentos por data (para consultas cronológicas).
-        """
-        print(f"[MetadataService] Buscando SQL por: {doc_type}, ordem: {order}, limite: {limit}")
-        try:
-            query = self.db.query(Document).filter(
-                Document.repo_name == repo_name,
-                Document.doc_type == doc_type
-            )
-            
-            if order == "desc":
-                query = query.order_by(Document.created_at.desc())
-            else:
-                query = query.order_by(Document.created_at.asc())
-            
-            # --- 2. MUDE DE .first() PARA .limit().all() ---
-            # Pega os N documentos (ex: 4) em vez de apenas 1
-            results = query.limit(limit).all()
-            
-            if not results:
-                return []
-                
-            # --- 3. FORMATE A LISTA DE RESULTADOS (LOOP) ---
-            # (Antes, isso estava formatando apenas um item)
-            formatted_results = []
-            for result in results: # Itera sobre os resultados
-                formatted_results.append({
-                    "text": result.text_content,
-                    "metadata": {
-                        "type": result.doc_type,
-                        "id": result.doc_id,
-                        "title": result.title,
-                        "author": result.author,
-                        "url": result.url,
-                        "date": result.created_at.isoformat() if result.created_at else None,
-                        "created_at": result.created_at.isoformat() if result.created_at else None
-                    }
-                })
-            return formatted_results # Retorna a lista completa
+    if not supabase:
+        raise Exception("Serviço Supabase não está inicializado.")
+    
+    if not documents:
+        print("[MetadataService] Nenhum documento para salvar.")
+        return
         
-        except Exception as e:
-            print(f"[MetadataService] Erro ao buscar no SQL DB: {e}")
-            return []
-        finally:
-            self.db.close()
-    def get_full_repo_analysis_data(self, repo_name: str) -> List[Dict[str, Any]]:
-            """
-            Busca TODOS os metadados de um repositório para análise completa.
-            """
-            print(f"[MetadataService] Buscando TODOS os dados do SQL para análise: {repo_name}")
-            try:
-                # Busca todos os documentos do repositório
-                results = self.db.query(Document).filter(
-                    Document.repo_name == repo_name
-                ).order_by(Document.created_at.desc()).all()
-                
-                if not results:
-                    return []
+    try:
+        # 1. Extrai o texto de cada documento para o batch
+        textos_para_embedding = [doc["conteudo"] for doc in documents]
+        
+        print(f"[MetadataService] Gerando {len(textos_para_embedding)} embeddings em lote...")
+        
+        # 2. Gera os embeddings em lote
+        embeddings = get_embeddings_batch(textos_para_embedding)
+        
+        # 3. Adiciona o embedding a cada documento
+        documentos_para_salvar = []
+        for i, doc in enumerate(documents):
+            doc["embedding"] = embeddings[i]
+            documentos_para_salvar.append(doc)
+        
+        print(f"[MetadataService] Salvando {len(documentos_para_salvar)} documentos no Supabase...")
+        
+        # 4. Salva tudo no Supabase de uma vez
+        response = supabase.table("documentos").insert(documentos_para_salvar).execute()
+        
+        if response.data:
+            print(f"[MetadataService] Lote salvo com sucesso. {len(response.data)} registros inseridos.")
+        else:
+            # (Nota: 'response.error' não é padrão, mas é bom verificar)
+            print(f"[MetadataService] Supabase salvou o lote, mas não retornou dados.")
 
-                # Formata os dados em um JSON leve para a LLM analisar
-                analysis_data = []
-                for doc in results:
-                    analysis_data.append({
-                        "tipo": doc.doc_type,
-                        "id": doc.doc_id,
-                        "autor": doc.author,
-                        "data": doc.created_at.isoformat() if doc.created_at else None,
-                        "titulo": doc.title
-                        # Não incluímos 'text_content' para não sobrecarregar o prompt
-                    })
-                
-                return analysis_data
-                
-            except Exception as e:
-                print(f"[MetadataService] Erro ao buscar dados completos do SQL: {e}")
-                return []
-            finally:
-                self.db.close()
-# Chama init_db() quando o módulo é importado pela primeira vez
-init_db()
+    except Exception as e:
+        print(f"[MetadataService] Erro CRÍTICO ao salvar lote no Supabase: {e}")
+        # Dependendo da política, você pode querer lançar o erro
+        raise
+
+def delete_documents_by_repo(repo_name: str):
+    """
+    Deleta TODOS os documentos (vetores e metadados) de um repositório
+    antes de uma nova ingestão.
+    """
+    if not supabase:
+        raise Exception("Serviço Supabase não está inicializado.")
+        
+    print(f"[MetadataService] Deletando dados antigos de: {repo_name}")
+    
+    try:
+        response = supabase.table("documentos").delete().eq("repositorio", repo_name).execute()
+        
+        if response.data:
+            print(f"[MetadataService] Dados antigos de {repo_name} deletados. ({len(response.data)} registros)")
+        else:
+            print(f"[MetadataService] Nenhum dado antigo encontrado para {repo_name}.")
+            
+    except Exception as e:
+        print(f"[MetadataService] Erro ao deletar dados antigos: {e}")
+        raise
+
+def find_similar_documents(query_text: str, repo_name: str, k: int = 5) -> List[Dict[str, Any]]:
+    """
+    Encontra os 'k' documentos mais similares a uma consulta
+    dentro de um repositório específico.
+    """
+    if not supabase:
+        raise Exception("Serviço Supabase não está inicializado.")
+        
+    try:
+        # 1. Gera o embedding para a consulta do usuário
+        print(f"[MetadataService] Gerando embedding para a consulta RAG...")
+        query_embedding = get_embedding(query_text)
+        
+        # 2. Chama a 'procedure' (função) do Supabase para busca vetorial
+        # Esta é a consulta SQL híbrida!
+        print(f"[MetadataService] Executando busca vetorial (match_documents)...")
+        response = supabase.rpc('match_documents', {
+            'query_embedding': query_embedding,
+            'match_repositorio': repo_name,
+            'match_count': k
+        }).execute()
+
+        if response.data:
+            print(f"[MetadataService] {len(response.data)} documentos similares encontrados.")
+            return response.data
+        else:
+            print("[MetadataService] Nenhum documento similar encontrado.")
+            return []
+
+    except Exception as e:
+        print(f"[MetadataService] Erro na busca vetorial: {e}")
+        raise

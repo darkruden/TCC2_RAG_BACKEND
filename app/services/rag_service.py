@@ -1,109 +1,91 @@
-# CÓDIGO COMPLETO PARA: app/services/rag_service.py
-# (Versão HÍBRIDA com Roteador)
+# app/services/rag_service.py
+from app.services.metadata_service import find_similar_documents
+from app.services.llm_service import LLMService
+from typing import Dict, Any
 
-import os
-from .embedding_service import EmbeddingService
-from .llm_service import LLMService
-from .router_service import RouterService # <-- Importa o Roteador
-from .metadata_service import MetadataService # <-- Importa o Serviço SQL
-from typing import List, Dict, Any
-
+# Inicializa o LLMService uma vez
 try:
-    embedding_service = EmbeddingService() # Nosso serviço Pinecone
-    llm_service = LLMService()
-    router_service = RouterService()       # Nosso novo Roteador
-    metadata_service = MetadataService()   # Nosso novo serviço SQL
-except ValueError as e:
-    print(f"Erro ao inicializar serviços (verifique .env): {e}")
+    llm_service = LLMService() # Usa o modelo padrão gpt-4o-mini
+    print("[RAGService] LLMService inicializado.")
+except Exception as e:
+    print(f"[RAGService] Erro ao inicializar LLMService: {e}")
     llm_service = None
-    embedding_service = None
-    router_service = None
-    metadata_service = None
 
-def _formatar_resultados_query_pinecone(resultados: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Converte a saída do PINECONE para o formato que o LLMService espera."""
-    contexto_formatado = []
-    if "matches" not in resultados:
-        return []
-    for match in resultados["matches"]:
-        metadata = match.get("metadata", {})
-        doc_text = metadata.get("text", "") 
-        contexto_formatado.append({
-            "text": doc_text,
-            "metadata": metadata
-        })
-    return contexto_formatado
-
-def gerar_resposta_rag(pergunta: str, repositorio: str):
+def _format_context_for_llm(context_docs: list) -> str:
     """
-    (Versão Híbrida) Gera resposta contextualizada via RAG.
-    1. Roteia a consulta para descobrir a intenção.
-    2. Busca no banco de dados apropriado (SQL para fatos, Pinecone para semântica).
-    3. Gera a resposta com a LLM.
+    Formata os documentos recuperados do Supabase em um contexto
+    de texto claro para a LLM.
     """
-    if not all([embedding_service, llm_service, router_service, metadata_service]):
-        msg = "Serviços essenciais (RAG, LLM, Roteador ou Metadados) não foram inicializados."
-        print(f"[ERRO] {msg}")
-        return {"texto": f"Erro: {msg}", "contexto": "N/A"}
-
-    try:
-        # --- ETAPA 1: ROTEAMENTO ---
-        rota = router_service.route_query(pergunta)
-        categoria = rota.get("categoria", "semantica")
+    if not context_docs:
+        return "Nenhum contexto encontrado."
+    
+    formatted_context = ""
+    for doc in context_docs:
+        # 'doc' é o resultado da nossa consulta SQL
+        tipo = doc.get('tipo')
+        meta = doc.get('metadados', {})
+        conteudo = doc.get('conteudo', '')
         
-        contexto_formatado = []
+        formatted_context += f"--- Fonte (Tipo: {tipo}) ---\n"
+        if tipo == 'commit':
+            formatted_context += f"URL: {meta.get('url')}\nAutor: {meta.get('autor')}\n"
+        else:
+            formatted_context += f"URL: {meta.get('url')}\nTítulo: {meta.get('titulo')}\n"
+        
+        formatted_context += f"Conteúdo: {conteudo}\n\n"
+        
+    return formatted_context
 
-        # --- ETAPA 2: BUSCA HÍBRIDA ---
-        if categoria == "cronologica":
-            print("[RAG] Rota: CRONOLÓGICA. Buscando no SQL...")
-            entidade = rota.get("entidade", "commit") # Padrão para commit
-            ordem = rota.get("ordem", "desc")         # Padrão para "último"
-            limite = int(rota.get("limite", 1))
-            # Busca no Postgres (rápido, factual)
-            contexto_formatado = metadata_service.find_document_by_date(
-                repo_name=repositorio,
-                doc_type=entidade,
-                order=ordem,
-                limit=limite # <-- ...e agora passa-o para a função.
-            )
-
-        # Se não for cronológica, ou se a busca SQL falhar, usamos a busca semântica
-        if categoria == "semantica" or not contexto_formatado:
-            if not contexto_formatado:
-                print("[RAG] Rota: Fallback para SEMÂNTICA (busca cronológica não retornou dados).")
-            else:
-                print("[RAG] Rota: SEMÂNTICA. Buscando no Pinecone...")
-
-            # Busca no Pinecone (semântica)
-            # (Note que voltamos para n_results=5, pois não precisamos mais do "hack")
-            resultados_query = embedding_service.query_collection_pinecone(
-                query_text=pergunta,
-                n_results=5, 
-                repo_name=repositorio
-            )
-            contexto_formatado = _formatar_resultados_query_pinecone(resultados_query)
-
-        # --- ETAPA 3: GERAÇÃO DE RESPOSTA ---
-        if not contexto_formatado:
-            print("[RAG] Nenhum contexto encontrado em NENHUM banco de dados.")
-            sem_contexto = "Nenhum contexto encontrado no banco vetorial ou de metadados para esta consulta."
-            return {"texto": sem_contexto, "contexto": sem_contexto}
-            
-        print(f"[RAG] Contexto final encontrado: {len(contexto_formatado)} documentos.")
-
-        resposta_llm = llm_service.generate_response(
-            query=pergunta,
-            context=contexto_formatado
+def gerar_resposta_rag(query: str, repo_name: str) -> Dict[str, Any]:
+    """
+    Função principal do RAG (chamada pelo main.py).
+    Coordena a busca vetorial e a geração de resposta da LLM.
+    """
+    if not llm_service:
+        raise Exception("RAGService não pode operar; LLMService falhou ao inicializar.")
+        
+    print(f"[RAGService] Recebida consulta para {repo_name}: '{query}'")
+    
+    try:
+        # 1. Buscar contexto (Busca Vetorial Híbrida)
+        # O MetadataService agora faz a busca vetorial
+        documentos_similares = find_similar_documents(
+            query_text=query,
+            repo_name=repo_name,
+            k=5 # Pega os 5 resultados mais relevantes
         )
-
-        contexto_texto_bruto = "\n\n".join([doc['text'] for doc in contexto_formatado])
+        
+        # 2. Formatar o contexto para a LLM
+        contexto_formatado = _format_context_for_llm(documentos_similares)
+        
+        # 3. Gerar a resposta com a LLM
+        print("[RAGService] Contexto enviado para LLMService...")
+        # (Esta função 'generate_response' é do seu llm_service.py
+        #  e pode precisar ser ajustada se o formato do contexto mudou)
+        
+        # O llm_service.py espera um contexto diferente, vamos adaptar
+        # (Adaptação para o formato esperado pelo seu llm_service.py)
+        contexto_para_llm = [
+            {
+                "text": doc.get('conteudo'),
+                "metadata": {**doc.get('metadados'), "type": doc.get('tipo')}
+            } 
+            for doc in documentos_similares
+        ]
+        
+        # Chama a função do seu llm_service.py
+        resposta_llm = llm_service.generate_response(
+            query=query,
+            context=contexto_para_llm
+        )
+        
+        print("[RAGService] Resposta recebida da LLM.")
         
         return {
             "texto": resposta_llm["response"],
-            "contexto": contexto_texto_bruto
+            "contexto": contexto_formatado # Retorna o contexto que usamos
         }
 
     except Exception as e:
-        print(f"Erro ao gerar resposta RAG: {e}")
-        traceback.print_exc()
-        return {"texto": f"Erro ao processar sua consulta: {e}", "contexto": "Erro"}
+        print(f"[RAGService] ERRO CRÍTICO ao gerar resposta RAG: {e}")
+        raise

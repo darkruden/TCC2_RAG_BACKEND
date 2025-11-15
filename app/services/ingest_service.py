@@ -1,70 +1,78 @@
-# [COLE ESSE NOVO CÓDIGO NO LUGAR DO CONTEÚDO ANTIGO DE ingest_service.py]
+# app/services/ingest_service.py
+from app.services.github_service import get_repo_data
+from app.services.metadata_service import save_documents_batch, delete_documents_by_repo
+from typing import List, Dict, Any
 
-# O que você deve colar
-import os
-from .github_service import GitHubService
-from .embedding_service import EmbeddingService
-
-# 1. Inicializar os serviços que vamos usar
-# Eles pegam as configurações (tokens, paths) das variáveis de ambiente
-try:
-    github_service = GitHubService()
-    embedding_service = EmbeddingService()
-except ValueError as e:
-    print(f"Erro ao inicializar serviços (verifique .env): {e}")
-    # Se não pudermos inicializar, definimos como None para falhar graciosamente
-    github_service = None
-    embedding_service = None
-
-def ingest_repo(owner_repo: str, issues_limit: int = 20, prs_limit: int = 10, commits_limit: int = 15):
+def _format_data_for_ingestion(repo_name: str, raw_data: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     """
-    Orquestra a ingestão de dados do GitHub para o ChromaDB.
+    Formata os dados brutos do GitHub no formato que a tabela
+    'documentos' do Supabase espera.
+    """
+    documentos = []
     
-    1. Busca dados do GitHubService.
-    2. Processa e salva os dados no ChromaDB via EmbeddingService.
+    # Formata Commits
+    for item in raw_data["commits"]:
+        conteudo = f"Commit de {item['author']}: {item['message']}"
+        documentos.append({
+            "repositorio": repo_name,
+            "tipo": "commit",
+            "metadados": {"sha": item['sha'], "autor": item['author'], "data": item['date'], "url": item['url']},
+            "conteudo": conteudo
+        })
+        
+    # Formata Issues
+    for item in raw_data["issues"]:
+        conteudo = f"Issue #{item['id']} por {item['author']}: {item['title']}\n{item['body']}"
+        documentos.append({
+            "repositorio": repo_name,
+            "tipo": "issue",
+            "metadados": {"id": item['id'], "autor": item['author'], "data": item['date'], "url": item['url'], "titulo": item['title']},
+            "conteudo": conteudo
+        })
+        
+    # Formata PRs
+    for item in raw_data["prs"]:
+        conteudo = f"PR #{item['id']} por {item['author']}: {item['title']}\n{item['body']}"
+        documentos.append({
+            "repositorio": repo_name,
+            "tipo": "pr",
+            "metadados": {"id": item['id'], "autor": item['author'], "data": item['date'], "url": item['url'], "titulo": item['title']},
+            "conteudo": conteudo
+        })
+    
+    return documentos
+
+def ingest_repo(repo_name: str, issues_limit: int, prs_limit: int, commits_limit: int) -> Dict[str, Any]:
     """
-    if not github_service or not embedding_service:
-        msg = "Serviços de GitHub ou Embedding não foram inicializados."
-        print(f"[ERRO] {msg}")
-        return f"Erro: {msg}"
-
-    print(f"Iniciando ingestão para o repositório: {owner_repo}")
-
+    Função principal de ingestão (chamada pelo worker do RQ).
+    Coordena a busca no GitHub, formatação e salvamento no Supabase.
+    """
+    print(f"[IngestService] INICIANDO INGESTÃO para {repo_name}...")
+    
     try:
-       # [COLE ESSA NOVA VERSÃO]
-
-        # 1. Buscar dados do GitHub (COM LIMITES)
-        print(f"Buscando issues para {owner_repo} (limite: {issues_limit})...") # Log melhorado
-        issues = github_service.get_issues(owner_repo, state="all", limit=issues_limit)
-        print(f"Encontradas {len(issues)} issues.")
-
-        print(f"Buscando Pull Requests para {owner_repo} (limite: {prs_limit})...") # Log melhorado
-        prs = github_service.get_pull_requests(owner_repo, state="all", limit=prs_limit)
-        print(f"Encontrados {len(prs)} Pull Requests.")
-
-        print(f"Buscando Commits para {owner_repo} (limite: {commits_limit})...") # Log melhorado
-        commits = github_service.get_commits(owner_repo, limit=commits_limit)
-        print(f"Encontrados {len(commits)} commits.")
-
-        # 2. Processar e salvar no ChromaDB
-        # Usamos o método do EmbeddingService que já faz tudo:
-        # cria embeddings e salva no ChromaDB
-        print("Processando e salvando dados no banco vetorial...")
-        resultado = embedding_service.process_github_data(
-            repo_name=owner_repo,
-            issues=issues,
-            prs=prs,
-            commits=commits
-        )
-
-        msg = f"Ingestão concluída para {owner_repo}: {resultado['documents_count']} documentos."
-        print(f"[SUCESSO] {msg}")
-        return msg
-
-    # O que você deve colar
+        # 1. Deletar dados antigos do repositório
+        # (Isso garante que não haja duplicatas)
+        delete_documents_by_repo(repo_name)
+        
+        # 2. Buscar novos dados do GitHub
+        raw_data = get_repo_data(repo_name, issues_limit, prs_limit, commits_limit)
+        
+        # 3. Formatar os dados para o formato do banco
+        documentos_para_salvar = _format_data_for_ingestion(repo_name, raw_data)
+        
+        if not documentos_para_salvar:
+            print(f"[IngestService] Nenhum documento formatado para salvar.")
+            return {"status": "concluído", "mensagem": "Nenhum dado encontrado para ingestão."}
+            
+        # 4. Salvar os novos documentos e embeddings no Supabase
+        save_documents_batch(documentos_para_salvar)
+        
+        mensagem_final = f"Ingestão de {repo_name} concluída. {len(documentos_para_salvar)} documentos salvos."
+        print(f"[IngestService] {mensagem_final}")
+        
+        return {"status": "concluído", "mensagem": mensagem_final}
+        
     except Exception as e:
-        # Usar repr(e) é muito melhor para debug
-        error_message = repr(e) 
-        print(f"Erro DETALHADO durante a ingestão de {owner_repo}: {error_message}")
-        # Retorna a mensagem de erro detalhada na API
-        return f"Erro durante a ingestão: {error_message}"
+        print(f"[IngestService] ERRO na ingestão de {repo_name}: {e}")
+        # Propaga o erro para o worker do RQ
+        raise
