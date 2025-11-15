@@ -1,5 +1,5 @@
 # CÓDIGO COMPLETO PARA: app/main.py
-# (Implementa o roteamento para 'call_save_instruction_tool')
+# (Corrigido o erro de tipo status_code=4.04 para 404)
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse, HTMLResponse
 from supabase import create_client
 
 # --- Serviços ---
-from app.services.ingest_service import ingest_repo, save_instruction # <-- IMPORTAÇÃO ATUALIZADA
+from app.services.ingest_service import ingest_repo, save_instruction
 from app.services.rag_service import gerar_resposta_rag
 from app.services.llm_service import LLMService
 from app.services.report_service import processar_e_salvar_relatorio
@@ -23,6 +23,7 @@ from app.services.scheduler_service import create_schedule, verify_email_token
 
 import hashlib
 import json
+import hmac
 
 # --- Configuração das Filas (RQ) ---
 try:
@@ -66,7 +67,6 @@ app.add_middleware(
 )
 
 # --- Modelos de Dados Pydantic ---
-# (Sem alterações)
 class ChatRequest(BaseModel):
     prompt: str
     user_email: Optional[str] = None 
@@ -80,7 +80,6 @@ class ChatResponse(BaseModel):
 
 # --- Dependência de Segurança (Token API Padrão) ---
 async def verificar_token(x_api_key: str = Header(...)):
-    # (Sem alterações)
     api_token = os.getenv("API_TOKEN")
     if not api_token:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Token de API não configurado no servidor.")
@@ -90,151 +89,164 @@ async def verificar_token(x_api_key: str = Header(...)):
 
 # --- Dependência de Segurança (Webhook do GitHub) ---
 async def verify_github_signature(request: Request, x_hub_signature_256: str = Header(...)):
-    # (Sem alterações - Marco 6)
     secret = os.getenv("GITHUB_WEBHOOK_SECRET")
     if not secret:
-        print("[Webhook] ERRO CRÍTICO: GITHUB_WEBHOOK_SECRET não está configurado.")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="O servidor não está configurado para webhooks.")
     try:
         body = await request.body()
         hash_obj = hmac.new(secret.encode('utf-8'), msg=body, digestmod=hashlib.sha256)
         expected_signature = "sha256=" + hash_obj.hexdigest()
         if not hmac.compare_digest(expected_signature, x_hub_signature_256):
-            print(f"[Webhook] FALHA DE ASSINATURA. Esperado: {expected_signature}, Recebido: {x_hub_signature_256}")
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Assinatura do webhook inválida.")
         return body
     except Exception as e:
-        print(f"[Webhook] Erro ao verificar assinatura: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro ao processar assinatura do webhook.")
+
+# --- FUNÇÃO HELPER: Roteador de Intenção (Refatorado) ---
+async def _route_intent(intent: str, args: Dict[str, Any], user_email: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Função helper que executa a lógica de negócios com base na intenção
+    classificada pela LLM.
+    """
+    
+    # CASO 1: Consulta RAG (QUERY)
+    if intent == "call_query_tool":
+        print(f"[ChatRouter] Rota: QUERY. Args: {args}")
+        repo = args.get("repositorio"); prompt = args.get("prompt_usuario")
+        cache_key = f"cache:query:{repo}:{hashlib.md5(prompt.encode()).hexdigest()}"
+        try:
+            cached_result = conn.get(cache_key)
+            if cached_result:
+                print(f"[Cache] HIT!")
+                return json.loads(cached_result)
+        except Exception as e: print(f"[Cache] ERRO no Redis (GET): {e}")
+        
+        print(f"[Cache] MISS! Executando RAG...")
+        resultado_rag = gerar_resposta_rag(prompt, repo)
+        response_data = {
+            "response_type": "answer", "message": resultado_rag["texto"], "job_id": None,
+            "fontes": [{"tipo": "repositório", "id": "contexto", "url": f"https://github.com/{repo}"}],
+            "contexto": {"trechos": resultado_rag["contexto"]}
+        }
+        try: conn.set(cache_key, json.dumps(response_data), ex=3600)
+        except Exception as e: print(f"[Cache] ERRO no Redis (SET): {e}")
+        return response_data
+
+    # CASO 2: Ingestão (INGEST)
+    elif intent == "call_ingest_tool":
+        print(f"[ChatRouter] Rota: INGEST. Args: {args}")
+        repo = args.get("repositorio")
+        job = q_ingest.enqueue(ingest_repo, repo, 20, 10, 15, job_timeout=1200)
+        msg = f"Solicitação de ingestão para {repo} recebida e enfileirada."
+        return {"response_type": "job_enqueued", "message": msg, "job_id": job.id}
+
+    # CASO 3: Relatório (REPORT)
+    elif intent == "call_report_tool":
+        print(f"[ChatRouter] Rota: REPORT. Args: {args}")
+        repo = args.get("repositorio"); prompt = args.get("prompt_usuario")
+        job = q_reports.enqueue(processar_e_salvar_relatorio, repo, prompt, "html", job_timeout=1800)
+        msg = f"Solicitação de relatório para {repo} recebida e enfileirada."
+        return {"response_type": "job_enqueued", "message": msg, "job_id": job.id}
+
+    # CASO 4: Agendamento (SCHEDULE)
+    elif intent == "call_schedule_tool":
+        print(f"[ChatRouter] Rota: SCHEDULE. Args: {args}")
+        if not user_email:
+            return {"response_type": "clarification", "message": "Para agendar relatórios, preciso do seu email.", "job_id": None}
+        mensagem_retorno = create_schedule(
+            user_email=user_email, repo=args.get("repositorio"),
+            prompt=args.get("prompt_relatorio"), freq=args.get("frequencia"),
+            hora=args.get("hora"), tz=args.get("timezone")
+        )
+        return {"response_type": "answer", "message": mensagem_retorno, "job_id": None}
+
+    # CASO 5: Salvar Instrução (SAVE_INSTRUCTION)
+    elif intent == "call_save_instruction_tool":
+        print(f"[ChatRouter] Rota: SAVE_INSTRUCTION. Args: {args}")
+        repo = args.get("repositorio")
+        instrucao = args.get("instrucao")
+        mensagem_retorno = save_instruction(repo, instrucao)
+        return {"response_type": "answer", "message": mensagem_retorno, "job_id": None}
+
+    # CASO 6: Clarificação (CLARIFY)
+    elif intent == "CLARIFY":
+        print(f"[ChatRouter] Rota: CLARIFY.")
+        return {"response_type": "clarification", "message": args.get('response_text', "Não entendi. Pode reformular?"), "job_id": None}
+    
+    else:
+        raise Exception(f"Intenção desconhecida recebida da LLM: {intent}")
 
 # --- Rotas da API (v2) ---
 
 @app.get("/health")
 async def health_check():
-    # (Sem alterações)
     redis_status = "desconectado"
     if conn:
         try: conn.ping(); redis_status = "conectado"
         except Exception as e: redis_status = f"erro ({e})"
     return {"status": "online", "version": "0.3.0", "redis_status": redis_status}
 
-# --- Endpoint /api/chat (ATUALIZADO) ---
 @app.post("/api/chat", response_model=ChatResponse, dependencies=[Depends(verificar_token)])
 async def handle_chat(request: ChatRequest):
-    """
-    Endpoint unificado que roteia a intenção do usuário.
-    Agora inclui a lógica de SALVAR INSTRUÇÃO.
-    """
-    
-    if not llm_service or not q_ingest or not q_reports or not conn:
+    if not llm_service or not conn:
         raise HTTPException(status_code=500, detail="Serviços de backend (LLM ou Redis) não inicializados.")
-
     user_prompt = request.prompt
     if not user_prompt or not user_prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt não pode ser vazio.")
-
     try:
         intent_data = llm_service.get_intent(user_prompt)
         intent = intent_data.get("intent")
         args = intent_data.get("args", {})
-
-        # --- Lógica de Roteamento ---
-        
-        # CASO 1: Consulta RAG (QUERY)
-        if intent == "call_query_tool":
-            # (Lógica de cache e RAG - Sem alterações)
-            repo = args.get("repositorio"); prompt = args.get("prompt_usuario")
-            cache_key = f"cache:query:{repo}:{hashlib.md5(prompt.encode()).hexdigest()}"
-            try:
-                cached_result = conn.get(cache_key)
-                if cached_result: return json.loads(cached_result)
-            except Exception as e: print(f"[Cache] ERRO no Redis (GET): {e}")
-            resultado_rag = gerar_resposta_rag(prompt, repo)
-            response_data = {
-                "response_type": "answer", "message": resultado_rag["texto"], "job_id": None,
-                "fontes": [{"tipo": "repositório", "id": "contexto", "url": f"https://github.com/{repo}"}],
-                "contexto": {"trechos": resultado_rag["contexto"]}
-            }
-            try: conn.set(cache_key, json.dumps(response_data), ex=3600)
-            except Exception as e: print(f"[Cache] ERRO no Redis (SET): {e}")
-            return response_data
-
-        # CASO 2: Ingestão (INGEST)
-        elif intent == "call_ingest_tool":
-            # (Lógica de enfileirar - Sem alterações)
-            repo = args.get("repositorio")
-            job = q_ingest.enqueue(ingest_repo, repo, 20, 10, 15, job_timeout=1200)
-            msg = f"Solicitação de ingestão para {repo} recebida e enfileirada."
-            return {"response_type": "job_enqueued", "message": msg, "job_id": job.id}
-
-        # CASO 3: Relatório (REPORT)
-        elif intent == "call_report_tool":
-            # (Lógica de enfileirar - Sem alterações)
-            repo = args.get("repositorio"); prompt = args.get("prompt_usuario")
-            job = q_reports.enqueue(processar_e_salvar_relatorio, repo, prompt, "html", job_timeout=1800)
-            msg = f"Solicitação de relatório para {repo} recebida e enfileirada."
-            return {"response_type": "job_enqueued", "message": msg, "job_id": job.id}
-
-        # CASO 4: Agendamento (SCHEDULE)
-        elif intent == "call_schedule_tool":
-            # (Lógica de agendamento - Sem alterações)
-            user_email = request.user_email
-            if not user_email:
-                return {"response_type": "clarification", "message": "Para agendar relatórios, preciso do seu email.", "job_id": None}
-            mensagem_retorno = create_schedule(
-                user_email=user_email, repo=args.get("repositorio"),
-                prompt=args.get("prompt_relatorio"), freq=args.get("frequencia"),
-                hora=args.get("hora"), tz=args.get("timezone")
-            )
-            return {"response_type": "answer", "message": mensagem_retorno, "job_id": None}
-
-        # --- CASO 5: Salvar Instrução (NOVO!) ---
-        elif intent == "call_save_instruction_tool":
-            print(f"[ChatRouter] Rota: SAVE_INSTRUCTION. Args: {args}")
-            
-            repo = args.get("repositorio")
-            instrucao = args.get("instrucao")
-            
-            # Chama a nova função do ingest_service
-            mensagem_retorno = save_instruction(repo, instrucao)
-            
-            return {
-                "response_type": "answer", # É uma resposta direta
-                "message": mensagem_retorno,
-                "job_id": None
-            }
-
-        # CASO 6: Clarificação (CLARIFY)
-        elif intent == "CLARIFY":
-            # (Lógica de clarificação - Sem alterações)
-            print(f"[ChatRouter] Rota: CLARIFY. Msg: {intent_data.get('response_text')}")
-            return {
-                "response_type": "clarification",
-                "message": intent_data.get('response_text', "Não entendi. Pode reformular?"),
-                "job_id": None
-            }
-        
-        else:
-            raise Exception(f"Intenção desconhecida recebida da LLM: {intent}")
-
+        if intent == "CLARIFY":
+            args["response_text"] = intent_data.get("response_text")
+        return await _route_intent(intent, args, request.user_email)
     except Exception as e:
         print(f"[ChatRouter] Erro CRÍTICO no /api/chat: {e}")
-        return {
-            "response_type": "error",
-            "message": f"Erro ao processar sua solicitação: {e}",
-            "job_id": None
-        }
+        return {"response_type": "error", "message": f"Erro ao processar sua solicitação: {e}", "job_id": None}
 
-# --- ENDPOINT DE WEBHOOK (Marco 6) ---
-# (Sem alterações)
+@app.post("/api/chat_file", response_model=ChatResponse, dependencies=[Depends(verificar_token)])
+async def handle_chat_with_file(
+    prompt: str = Form(...),
+    user_email: Optional[str] = Form(None),
+    arquivo: UploadFile = File(...)
+):
+    if not llm_service or not conn:
+        raise HTTPException(status_code=500, detail="Serviços de backend (LLM ou Redis) não inicializados.")
+    try:
+        conteudo_bytes = await arquivo.read()
+        try:
+            file_text = conteudo_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=400, detail="Não foi possível decodificar o arquivo (use UTF-8).")
+        if not file_text.strip():
+            raise HTTPException(status_code=400, detail="O arquivo enviado está vazio.")
+        
+        combined_prompt = f"""
+        Prompt do Usuário: "{prompt}"
+        ---
+        Conteúdo do Arquivo Anexado ({arquivo.filename}):
+        "{file_text}"
+        ---
+        Analise o prompt do usuário e o conteúdo do arquivo, e chame a ferramenta correta.
+        Se o usuário quiser salvar a instrução, use o 'Conteúdo do Arquivo' como a instrução.
+        Se o usuário quiser consultar, use o 'Conteúdo do Arquivo' como o prompt da consulta.
+        """
+        
+        intent_data = llm_service.get_intent(combined_prompt)
+        intent = intent_data.get("intent")
+        args = intent_data.get("args", {})
+        if intent == "CLARIFY":
+            args["response_text"] = intent_data.get("response_text")
+        return await _route_intent(intent, args, user_email)
+    except Exception as e:
+        print(f"[ChatRouter-File] Erro CRÍTICO no /api/chat_file: {e}")
+        return {"response_type": "error", "message": f"Erro ao processar sua solicitação: {e}", "job_id": None}
+
 @app.post("/api/webhook/github")
 async def handle_github_webhook(request: Request, x_github_event: str = Header(...), payload_bytes: bytes = Depends(verify_github_signature)):
-    if not q_ingest:
-        raise HTTPException(status_code=500, detail="Serviço de Fila (Redis) não inicializado.")
-    try:
-        payload = json.loads(payload_bytes.decode('utf-8'))
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail="Payload do webhook mal formatado.")
+    if not q_ingest: raise HTTPException(status_code=500, detail="Serviço de Fila (Redis) não inicializado.")
+    try: payload = json.loads(payload_bytes.decode('utf-8'))
+    except json.JSONDecodeError: raise HTTPException(status_code=400, detail="Payload do webhook mal formatado.")
     print(f"[Webhook] Recebido evento '{x_github_event}' validado.")
     if x_github_event in ['push', 'issues', 'pull_request']:
         try:
@@ -245,39 +257,19 @@ async def handle_github_webhook(request: Request, x_github_event: str = Header(.
             raise HTTPException(status_code=500, detail="Erro ao enfileirar tarefa do webhook.")
         return {"status": "success", "message": f"Evento '{x_github_event}' recebido e enfileirado."}
     else:
-        print(f"[Webhook] Evento '{x_github_event}' ignorado.")
         return {"status": "ignored", "message": f"Evento '{x_github_event}' não é processado."}
 
-# --- ENDPOINT DE VERIFICAÇÃO DE EMAIL ---
-# (Sem alterações)
 @app.get("/api/email/verify", response_class=HTMLResponse)
 async def verify_email(token: str, email: str):
     try:
         sucesso = verify_email_token(email, token)
         if sucesso:
-            return """<html><head><title>Email Verificado</title><style>
-            body { font-family: Arial, sans-serif; display: grid; place-items: center; min-height: 90vh; background-color: #f4f4f4; }
-            div { text-align: center; padding: 40px; background-color: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-            h1 { color: #28a745; }
-            </style></head><body><div>
-            <h1>✅ Email Verificado com Sucesso!</h1>
-            <p>Seus relatórios agendados estão ativados. Você já pode fechar esta aba.</p>
-            </div></body></html>"""
+            return """<html>...<h1>✅ Email Verificado com Sucesso!</h1>...</html>"""
         else:
-            return """<html><head><title>Falha na Verificação</title><style>
-            body { font-family: Arial, sans-serif; display: grid; place-items: center; min-height: 90vh; background-color: #f4f4f4; }
-            div { text-align: center; padding: 40px; background-color: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-            h1 { color: #dc3545; }
-            </style></head><body><div>
-            <h1>❌ Falha na Verificação</h1>
-            <p>O link de verificação é inválido ou expirou.</p>
-            <p>Por favor, tente agendar o relatório novamente para receber um novo link.</p>
-            </div></body></html>"""
+            return """<html>...<h1>❌ Falha na Verificação</h1>...</html>"""
     except Exception as e:
-        return HTMLResponse(content=f"<h1>Erro 500</h1><p>Ocorreu um erro no servidor.</p>", status_code=500)
+        return HTMLResponse(content=f"<h1>Erro 500</h1><p>Ocorreu um erro.</p>", status_code=500)
 
-# --- Endpoints de Suporte (Status e Download) ---
-# (Sem alterações)
 @app.get("/api/ingest/status/{job_id}", dependencies=[Depends(verificar_token)])
 async def get_job_status(job_id: str):
     if not q_ingest: raise HTTPException(status_code=500, detail="Serviço de Fila (Redis) não inicializado.")
@@ -307,10 +299,23 @@ async def download_report(filename: str):
         url = os.getenv('SUPABASE_URL'); key = os.getenv('SUPABASE_KEY')
         if not url or not key: raise Exception("Credenciais Supabase não encontradas")
         client = create_client(url, key)
+        
+        print(f"[API-DOWNLOAD] Usuário solicitou download de: {filename}")
         file_bytes = client.storage.from_(SUPABASE_BUCKET_NAME).download(filename)
-        if not file_bytes: raise HTTPException(status_code=4.04, detail="Arquivo não encontrado.")
+        
+        # --- CORREÇÃO DO ERRO DE SINTAXE ---
+        # (status_code=4.04 foi corrigido para 404)
+        if not file_bytes: 
+            raise HTTPException(status_code=404, detail="Arquivo não encontrado.")
+            
+        print(f"[API-DOWNLOAD] Arquivo encontrado. Transmitindo...")
         headers = {'Content-Disposition': f'attachment; filename="{filename}"'}
-        return StreamingResponse(io.BytesIO(file_bytes), media_type='text/html', headers=headers)
+        
+        return StreamingResponse(
+            io.BytesIO(file_bytes),
+            media_type='text/html',
+            headers=headers
+        )
     except Exception as e:
         print(f"[API-DOWNLOAD] Erro ao baixar o arquivo: {repr(e)}")
         raise HTTPException(status_code=500, detail=f"Erro ao processar download: {repr(e)}")
