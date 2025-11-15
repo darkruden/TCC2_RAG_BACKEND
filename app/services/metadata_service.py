@@ -124,3 +124,29 @@ def find_similar_documents(query_text: str, repo_name: str, k: int = 5) -> List[
     except Exception as e:
         print(f"[MetadataService] Erro na busca vetorial: {e}")
         raise
+
+def get_all_documents_by_repo(repo_name: str) -> List[Dict[str, Any]]:
+    """
+    Busca TODOS os documentos (metadados e conteúdo) de um repositório
+    para serem usados na geração de relatórios.
+    """
+    if not supabase:
+        print("[MetadataService] Supabase não inicializado, não é possível buscar documentos.")
+        raise Exception("Serviço Supabase não está inicializado.")
+        
+    print(f"[MetadataService] Buscando todos os documentos de: {repo_name}")
+    
+    try:
+        # Seleciona apenas os campos que a LLM usará
+        response = supabase.table("documentos").select("metadados, conteudo, tipo").eq("repositorio", repo_name).execute()
+        
+        if response.data:
+            print(f"[MetadataService] Encontrados {len(response.data)} documentos para o relatório.")
+            return response.data
+        else:
+            print(f"[MetadataService] Nenhum documento encontrado para {repo_name}.")
+            return []
+            
+    except Exception as e:
+        print(f"[MetadataService] Erro ao buscar todos os documentos: {e}")
+        return [] # Retorna vazio em caso de erro
