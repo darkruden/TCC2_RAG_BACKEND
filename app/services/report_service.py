@@ -1,5 +1,5 @@
 # CÓDIGO COMPLETO PARA: app/services/report_service.py
-# (Refatorado para usar Classes)
+# (Refatorado - Função de tarefa movida para worker_tasks.py)
 
 import os
 import markdown
@@ -11,8 +11,10 @@ from typing import Dict, Any, Tuple
 from app.services.metadata_service import MetadataService
 from app.services.llm_service import LLMService
 
-# (SupabaseStorageService não muda, mas precisa ser parte da classe)
 class SupabaseStorageService:
+    """
+    Serviço para fazer upload de arquivos (relatórios) para o Supabase Storage.
+    """
     def __init__(self):
         self.url: str = os.getenv('SUPABASE_URL')
         self.key: str = os.getenv('SUPABASE_KEY')
@@ -45,16 +47,17 @@ class ReportService:
     """
     def __init__(self):
         try:
-            self.metadata_service = MetadataService()
+            # (Corrigindo um bug: ReportService não precisa do MetadataService
+            #  no __init__. A tarefa do worker é que precisa.)
             self.llm_service = LLMService()
             self.storage_service = SupabaseStorageService()
-            print("[ReportService] Serviços LLM, Metadata e Storage inicializados.")
+            print("[ReportService] Serviços LLM e Storage inicializados.")
         except Exception as e:
             print(f"[ReportService] Erro crítico ao inicializar serviços dependentes: {e}")
             raise
     
-    def _generate_html_report_content(self, repo_name: str, llm_json_output: str) -> Tuple[str, str]:
-        # (Esta é a função 'generate_html_report_content' anterior, agora privada)
+    def generate_html_report_content(self, repo_name: str, llm_json_output: str) -> Tuple[str, str]:
+        # (Este é o helper _generate_html_report_content)
         try:
             report_data = json.loads(llm_json_output)
             analysis_markdown = report_data.get("analysis_markdown", "Erro: Análise em Markdown não gerada.")
@@ -68,7 +71,6 @@ class ReportService:
         
         chart_script_data = json.dumps(chart_json_obj) if chart_json_obj else 'null'
         
-        # (Template HTML não muda)
         template_html = f"""
 <!DOCTYPE html><html lang="pt-br"><head><meta charset="UTF-8"><title>Relatório: {repo_name}</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script><style>
@@ -103,84 +105,15 @@ if (chartData && chartData.data) {{
         filename = f"{repo_name.replace('/', '_')}_report_{unique_id}.html"
         return template_html, filename
 
-    def _generate_report_content(self, repo_name: str, content_json_str: str, format: str = "html") -> Tuple[str, str, str]:
-        # (Esta é a função 'generate_report_content' anterior, agora privada)
+    def generate_report_content(self, repo_name: str, content_json_str: str, format: str = "html") -> Tuple[str, str, str]:
+        # (Este é o helper _generate_report_content)
         if format.lower() == "html":
-            content_string, filename = self._generate_html_report_content(repo_name, content_json_str)
+            content_string, filename = self.generate_html_report_content(repo_name, content_json_str)
             return content_string, filename, "text/html; charset=utf-8"
         else:
             unique_id = str(uuid.uuid4()).split('-')[0]
             filename = f"{repo_name.replace('/', '_')}_report_{unique_id}.json"
             return content_json_str, filename, "application/json; charset=utf-8"
 
-    def processar_e_salvar_relatorio(self, repo_name: str, user_prompt: str, format: str = "html"):
-        """
-        Tarefa do Worker (RQ) que gera um relatório para DOWNLOAD.
-        """
-        SUPABASE_BUCKET_NAME = "reports" 
-        print(f"[WORKER-REPORTS] Iniciando relatório (com RAG) para: {repo_name}")
-        try:
-            # 1. Busca uma instrução salva (RAG)
-            retrieved_instruction = self.metadata_service.find_similar_instruction(repo_name, user_prompt)
-            
-            if retrieved_instruction:
-                print(f"[WORKER-REPORTS] Instrução RAG encontrada. Combinando prompts...")
-                combined_prompt = f"Instrução Base: '{user_prompt}'\nContexto Salvo: '{retrieved_instruction}'\nGere o relatório."
-            else:
-                print(f"[WORKER-REPORTS] Nenhuma instrução RAG encontrada. Usando prompt padrão.")
-                combined_prompt = user_prompt
-                
-            # 2. Busca os dados brutos para a análise
-            try:
-                dados_brutos = self.metadata_service.get_all_documents_by_repo(repo_name)
-            except Exception as e:
-                 print(f"[WORKER-REPORTS] AVISO: Falha ao buscar documentos: {e}")
-                 dados_brutos = []
-            
-            if not dados_brutos:
-                print("[WORKER-REPORTS] Nenhum dado encontrado no SQL.")
-
-            print(f"[WORKER-REPORTS] {len(dados_brutos)} registos encontrados. Enviando para LLM...")
-
-            # 3. Gera o JSON do relatório (usando o prompt combinado)
-            report_json_string = self.llm_service.generate_analytics_report(
-                repo_name=repo_name,
-                user_prompt=combined_prompt,
-                raw_data=dados_brutos
-            )
-            
-            print("[WORKER-REPORTS] Relatório JSON gerado pela LLM.")
-
-            # 4. Gera o CONTEÚDO (HTML) e o NOME DO ARQUIVO
-            (content_to_upload, filename, content_type) = self._generate_report_content(
-                repo_name, report_json_string, format
-            )
-            
-            print(f"[WORKER-REPORTS] Conteúdo HTML gerado. Fazendo upload de {filename}...")
-            
-            # 5. Fazer UPLOAD do conteúdo
-            self.storage_service.upload_file_content(
-                content_string=content_to_upload,
-                filename=filename,
-                bucket_name=SUPABASE_BUCKET_NAME,
-                content_type=content_type
-            )
-            
-            print(f"[WORKER-REPORTS] Upload com sucesso! Retornando filename: {filename}")
-            
-            # 6. Retornar o nome do arquivo (para o App.js baixar)
-            return filename
-            
-        except Exception as e:
-            error_message = repr(e)
-            print(f"[WORKER-REPORTS] Erro detalhado durante geração de relatório: {error_message}")
-            return f"Erro during a geração do relatório: {error_message}"
-
-# --- Instância Singleton para o Worker ---
-try:
-    _report_service_instance = ReportService()
-    processar_e_salvar_relatorio = _report_service_instance.processar_e_salvar_relatorio
-    print("[ReportService] Instância de serviço criada e função exportada.")
-except Exception as e:
-    print(f"[ReportService] Falha ao criar instância de serviço: {e}")
-    processar_e_salvar_relatorio = None
+# (A função 'processar_e_salvar_relatorio' foi movida para worker_tasks.py)
+# (O singleton no final foi removido)
