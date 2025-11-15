@@ -1,5 +1,5 @@
-# CÓDIGO COMPLETO E CORRIGIDO PARA: app/services/llm_service.py
-# (Instrui a LLM a usar 'pie' charts em vez de 'graph TD')
+# CÓDIGO COMPLETO PARA: app/services/llm_service.py
+# (Adicionada a função 'get_intent' com 'OpenAI Tools' para roteamento)
 
 import os
 import json
@@ -9,16 +9,11 @@ from typing import List, Dict, Any, Optional
 class LLMService:
     """
     Serviço para integração com modelos de linguagem grandes (LLMs).
-    Utiliza a API da OpenAI para gerar respostas contextuais.
     """
     
     def __init__(self, api_key: str = None, model: str = "gpt-4o-mini"):
         """
         Inicializa o serviço LLM.
-        
-        Args:
-            api_key: Chave da API OpenAI
-            model: Modelo a ser utilizado
         """
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
@@ -27,16 +22,148 @@ class LLMService:
         self.model = model
         self.client = OpenAI(api_key=self.api_key)
         
+        # Contador para monitoramento de uso
         self.token_usage = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
             "total_tokens": 0
         }
+
+        # --- NOVO: Definição das Ferramentas para o Roteador de Intenção ---
+        self.intent_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "call_ingest_tool",
+                    "description": "Usado quando o usuário quer ingerir, re-ingerir ou indexar um repositório.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "repositorio": {
+                                "type": "string",
+                                "description": "O nome do repositório no formato 'usuario/nome'.",
+                            }
+                        },
+                        "required": ["repositorio"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "call_query_tool",
+                    "description": "Usado quando o usuário faz uma pergunta geral sobre um repositório (ex: 'quem...', 'o que...', 'me fale sobre...').",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "repositorio": {
+                                "type": "string",
+                                "description": "O nome do repositório no formato 'usuario/nome'.",
+                            },
+                            "prompt_usuario": {
+                                "type": "string",
+                                "description": "A pergunta específica do usuário.",
+                            }
+                        },
+                        "required": ["repositorio", "prompt_usuario"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "call_report_tool",
+                    "description": "Usado quando o usuário pede explicitamente um 'relatório', 'gráfico' ou 'análise' para download.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "repositorio": {
+                                "type": "string",
+                                "description": "O nome do repositório no formato 'usuario/nome'.",
+                            },
+                            "prompt_usuario": {
+                                "type": "string",
+                                "description": "A instrução para o relatório (ex: 'gere um gráfico de pizza dos commits').",
+                            }
+                        },
+                        "required": ["repositorio", "prompt_usuario"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "call_schedule_tool",
+                    "description": "Usado quando o usuário quer agendar um relatório para o futuro (ex: 'todo dia', 'às 17h').",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "instrucao_agendamento": {
+                                "type": "string",
+                                "description": "O prompt completo do usuário sobre o agendamento.",
+                            }
+                        },
+                        "required": ["instrucao_agendamento"],
+                    },
+                },
+            },
+        ]
+
+    # --- NOVA FUNÇÃO: O Roteador de Intenção ---
+    def get_intent(self, user_query: str) -> Dict[str, Any]:
+        """
+        Usa a LLM e 'Tools' para classificar a intenção do usuário
+        e extrair as entidades necessárias.
+        """
+        if not self.client:
+            raise Exception("LLMService não inicializado.")
+            
+        print(f"[LLMService] Classificando intenção para: '{user_query}'")
+
+        system_prompt = "Você é um roteador de API. Sua tarefa é analisar o prompt do usuário e chamar a ferramenta correta com os parâmetros corretos. Se o repositório não for mencionado, pergunte ao usuário."
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_query}
+                ],
+                tools=self.intent_tools,
+                tool_choice="auto" # Deixa a OpenAI decidir a ferramenta
+            )
+
+            response_message = response.choices[0].message
+            tool_calls = response_message.tool_calls
+
+            # --- Verificação de Erro 1: A LLM não escolheu uma ferramenta ---
+            if not tool_calls:
+                print(f"[LLMService] Nenhuma ferramenta chamada. A LLM respondeu: {response_message.content}")
+                # A LLM pode estar pedindo mais informações (ex: qual repositório?)
+                return {"intent": "CLARIFY", "response_text": response_message.content}
+
+            # --- Sucesso: A LLM escolheu uma ferramenta ---
+            tool_call = tool_calls[0] # Pegamos a primeira ferramenta
+            function_name = tool_call.function.name
+            function_args = json.loads(tool_call.function.arguments)
+
+            print(f"[LLMService] Intenção classificada: {function_name}")
+            
+            # Retorna um dicionário unificado
+            return {
+                "intent": function_name,
+                "args": function_args
+            }
+
+        except Exception as e:
+            print(f"[LLMService] Erro CRÍTICO ao classificar intenção: {e}")
+            raise Exception(f"Erro ao processar sua solicitação na LLM: {e}")
     
+    # --- FUNÇÃO EXISTENTE (generate_response) ---
+    # (Não muda, mas agora é chamada pelo RAGService)
     def generate_response(self, query: str, context: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Gera uma resposta contextual usando o LLM.
-        (Esta função permanece inalterada)
         """
         formatted_context = self._format_context(context)
         
@@ -79,7 +206,7 @@ EXEMPLO DE FORMATAÇÃO INCORRETA (NUNCA FAÇA ISSO):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=0.3,
+            temperature=0.3, 
             max_tokens=1000
         )
         
@@ -97,18 +224,17 @@ EXEMPLO DE FORMATAÇÃO INCORRETA (NUNCA FAÇA ISSO):
             }
         }
     
+    # --- FUNÇÃO EXISTENTE (generate_analytics_report) ---
+    # (Corrigida para usar 'pie' chart)
     def generate_analytics_report(self, repo_name: str, user_prompt: str, raw_data: List[Dict[str, Any]]) -> str:
         """
         Gera um relatório de análise de dados (analytics) com base
         em um prompt do usuário e dados brutos do SQL.
-        Instrui o modelo a gerar gráficos usando Mermaid.js.
         """
         
         context_json_string = json.dumps(raw_data)
         
-        # --- INÍCIO DA CORREÇÃO ---
-        # Alterado o system_prompt para exigir 'pie' chart
-        
+        # --- CORREÇÃO DO PROMPT (para 'pie' chart) ---
         system_prompt = f"""
 Você é um analista de dados e engenheiro de software de elite, 
 especializado em analisar repositórios GitHub.
@@ -134,7 +260,6 @@ REGRAS OBRIGATÓRIAS:
         "Autor C": 3
     ```
 """
-        # --- FIM DA CORREÇÃO ---
         
         final_user_prompt = f"""
 Contexto do Repositório: {repo_name}
@@ -168,73 +293,42 @@ usando os dados brutos e incluindo um gráfico de pizza (pie chart) Mermaid.js.
         
         return response.choices[0].message.content
     
+    # --- Funções existentes (não mudam) ---
     def get_token_usage(self) -> Dict[str, int]:
-        """
-        Retorna estatísticas de uso de tokens.
-        """
         return self.token_usage
     
     def _format_context(self, context: List[Dict[str, Any]]) -> str:
-        """
-        Formata o contexto para inclusão no prompt.
-        (Esta função permanece inalterada)
-        """
+        # (Esta função permanece inalterada)
         formatted = ""
-        
         for i, doc in enumerate(context):
             doc_type = doc.get("metadata", {}).get("type", "documento")
             doc_id = doc.get("metadata", {}).get("id", i)
-            
             if doc_type == "issue":
-                formatted += f"Issue #{doc_id}: {doc.get('metadata', {}).get('title', '')}\n"
-                formatted += f"URL: {doc.get('metadata', {}).get('url', '')}\n"
-                formatted += f"Data: {doc.get('metadata', {}).get('created_at', '')}\n"
-                formatted += f"Conteúdo: {doc.get('text', '')}\n\n"
-            
+                formatted += f"Issue #{doc_id}: {doc.get('metadata', {}).get('title', '')}\nURL: {doc.get('metadata', {}).get('url', '')}\nData: {doc.get('metadata', {}).get('created_at', '')}\nConteúdo: {doc.get('text', '')}\n\n"
             elif doc_type == "pull_request":
-                formatted += f"Pull Request #{doc_id}: {doc.get('metadata', {}).get('title', '')}\n"
-                formatted += f"URL: {doc.get('metadata', {}).get('url', '')}\n"
-                formatted += f"Data: {doc.get('metadata', {}).get('created_at', '')}\n"
-                formatted += f"Conteúdo: {doc.get('text', '')}\n\n"
-            
+                formatted += f"Pull Request #{doc_id}: {doc.get('metadata', {}).get('title', '')}\nURL: {doc.get('metadata', {}).get('url', '')}\nData: {doc.get('metadata', {}).get('created_at', '')}\nConteúdo: {doc.get('text', '')}\n\n"
             elif doc_type == "commit":
-                formatted += f"Commit {doc.get('metadata', {}).get('sha', '')[:7]}\n"
-                formatted += f"URL: {doc.get('metadata', {}).get('url', '')}\n"
-                formatted += f"Autor: {doc.get('metadata', {}).get('author', '')}\n"
-                formatted += f"Data: {doc.get('metadata', {}).get('date', '')}\n"
-                formatted += f"Mensagem: {doc.get('text', '')}\n\n"
-            
+                formatted += f"Commit {doc.get('metadata', {}).get('sha', '')[:7]}\nURL: {doc.get('metadata', {}).get('url', '')}\nAutor: {doc.get('metadata', {}).get('author', '')}\nData: {doc.get('metadata', {}).get('date', '')}\nMensagem: {doc.get('text', '')}\n\n"
             else:
                 formatted += f"Documento {i+1}:\n{doc.get('text', '')}\n\n"
-        
         return formatted
     
     def _format_requirements_data(self, requirements_data: List[Dict[str, Any]]) -> str:
-        """
-        Formata os dados dos requisitos para inclusão no prompt.
-        (Esta função permanece inalterada)
-        """
+        # (Esta função permanece inalterada)
         formatted = ""
-        
         for i, req in enumerate(requirements_data):
-            formatted += f"Requisito {i+1}: {req.get('title', '')}\n"
-            formatted += f"Descrição: {req.get('description', '')}\n"
-            
+            formatted += f"Requisito {i+1}: {req.get('title', '')}\nDescrição: {req.get('description', '')}\n"
             if "issues" in req and req["issues"]:
                 formatted += "Issues relacionadas:\n"
                 for issue in req["issues"]:
                     formatted += f"- Issue #{issue.get('id')}: {issue.get('title')}\n"
-            
             if "pull_requests" in req and req["pull_requests"]:
                 formatted += "Pull Requests relacionados:\n"
                 for pr in req["pull_requests"]:
                     formatted += f"- PR #{pr.get('id')}: {pr.get('title')}\n"
-            
             if "commits" in req and req["commits"]:
                 formatted += "Commits relacionados:\n"
                 for commit in req["commits"]:
                     formatted += f"- {commit.get('sha')[:7]}: {commit.get('message')}\n"
-            
             formatted += "\n"
-        
         return formatted
