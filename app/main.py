@@ -64,7 +64,7 @@ except Exception as e:
     llm_service = None
 
 # (O resto do seu main.py permanece o mesmo)
-app = FastAPI(title="GitHub RAG API (v2 - Chat com Agendamento)", ...)
+app = FastAPI(title="GitHub RAG API (v2 - Chat com Agendamento)")
 app.add_middleware(CORSMiddleware, ...)
 
 class ChatRequest(BaseModel): ...
