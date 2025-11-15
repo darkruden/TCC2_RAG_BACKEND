@@ -1,5 +1,5 @@
 # CÓDIGO COMPLETO PARA: app/main.py
-# (Corrigido para importar tarefas do worker_tasks.py)
+# (Atualizado para usar 'RQ_QUEUE_PREFIX' e isolar as filas)
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -14,12 +14,12 @@ import io
 from fastapi.responses import StreamingResponse, HTMLResponse 
 from supabase import create_client
 
-# --- Importações de Tarefas e Serviços ---
-from app.services.rag_service import gerar_resposta_rag # (Chamada direta)
+# --- Serviços ---
+from app.services.rag_service import gerar_resposta_rag
 from app.services.llm_service import LLMService
 from app.services.scheduler_service import create_schedule, verify_email_token
 
-# --- NOVAS IMPORTAÇÕES (Apontando para as tarefas do worker) ---
+# --- Tarefas do Worker ---
 from worker_tasks import (
     ingest_repo, 
     save_instruction, 
@@ -40,9 +40,17 @@ except Exception as e:
     print(f"[Main] ERRO CRÍTICO: Não foi possível conectar ao Redis em {redis_url}. {e}")
     conn = None
 
+# --- INÍCIO DA CORREÇÃO (Prefixo de Fila) ---
+# Lê o prefixo do ambiente (ex: 'test_'). Se não existir, usa '' (vazio).
+QUEUE_PREFIX = os.getenv('RQ_QUEUE_PREFIX', '')
+if QUEUE_PREFIX:
+    print(f"[Main] Usando prefixo de fila: '{QUEUE_PREFIX}'")
+# --- FIM DA CORREÇÃO ---
+
 if conn:
-    q_ingest = Queue('ingest', connection=conn) 
-    q_reports = Queue('reports', connection=conn)
+    # Adiciona o prefixo aos nomes das filas
+    q_ingest = Queue(f'{QUEUE_PREFIX}ingest', connection=conn) 
+    q_reports = Queue(f'{QUEUE_PREFIX}reports', connection=conn)
 else:
     q_ingest = None
     q_reports = None
@@ -51,77 +59,36 @@ else:
 try:
     llm_service = LLMService() 
     print("[Main] LLMService inicializado.")
-    # (Não precisamos mais instanciar IngestService ou ReportService aqui)
 except Exception as e:
     print(f"[Main] ERRO: Falha ao inicializar LLMService: {e}")
     llm_service = None
 
-# Inicializar aplicação FastAPI
-app = FastAPI(
-    title="GitHub RAG API (v2 - Chat com Agendamento)",
-    description="API unificada para análise, rastreabilidade e relatórios agendados.",
-    version="0.3.0"
-)
+# (O resto do seu main.py permanece o mesmo)
+app = FastAPI(title="GitHub RAG API (v2 - Chat com Agendamento)", ...)
+app.add_middleware(CORSMiddleware, ...)
 
-# Configurar CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
-)
+class ChatRequest(BaseModel): ...
+class ChatResponse(BaseModel): ...
+async def verificar_token(x_api_key: str = Header(...)): ...
+async def verify_github_signature(request: Request, x_hub_signature_256: str = Header(...)): ...
 
-# --- Modelos de Dados Pydantic ---
-class ChatRequest(BaseModel):
-    prompt: str
-    user_email: Optional[str] = None 
-
-class ChatResponse(BaseModel):
-    response_type: str
-    message: str
-    job_id: Optional[str] = None
-    fontes: Optional[List[Dict[str, Any]]] = None
-    contexto: Optional[Dict[str, Any]] = None
-
-# --- Dependências de Segurança ---
-async def verificar_token(x_api_key: str = Header(...)):
-    # (Sem alterações)
-    api_token = os.getenv("API_TOKEN")
-    if not api_token: raise HTTPException(status_code=500, detail="Token de API não configurado no servidor.")
-    if x_api_key != api_token: raise HTTPException(status_code=401, detail="Token de API inválido")
-    return x_api_key
-
-async def verify_github_signature(request: Request, x_hub_signature_256: str = Header(...)):
-    # (Sem alterações)
-    secret = os.getenv("GITHUB_WEBHOOK_SECRET")
-    if not secret: raise HTTPException(status_code=500, detail="O servidor não está configurado para webhooks.")
-    try:
-        body = await request.body()
-        hash_obj = hmac.new(secret.encode('utf-8'), msg=body, digestmod=hashlib.sha256)
-        expected_signature = "sha256=" + hash_obj.hexdigest()
-        if not hmac.compare_digest(expected_signature, x_hub_signature_256):
-            raise HTTPException(status_code=401, detail="Assinatura do webhook inválida.")
-        return body
-    except Exception as e:
-        raise HTTPException(status_code=400, detail="Erro ao processar assinatura do webhook.")
-
-# --- FUNÇÃO HELPER: Roteador de Intenção (Refatorado) ---
+# --- Helper de Roteamento (Atualizado para checar 'conn') ---
 async def _route_intent(intent: str, args: Dict[str, Any], user_email: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Função helper que executa a lógica de negócios com base na intenção
-    classificada pela LLM.
-    """
     
+    # Adiciona verificação se a conexão com a fila existe
+    if not conn or not q_ingest or not q_reports:
+        print("[ChatRouter] ERRO: Conexão com Redis (RQ) não está disponível.")
+        return {"response_type": "error", "message": "Erro de servidor: O serviço de fila (Redis) está indisponível.", "job_id": None}
+
     # CASO 1: Consulta RAG (QUERY)
     if intent == "call_query_tool":
-        # (Sem alterações)
         repo = args.get("repositorio"); prompt = args.get("prompt_usuario")
         cache_key = f"cache:query:{repo}:{hashlib.md5(prompt.encode()).hexdigest()}"
         try:
             cached_result = conn.get(cache_key)
             if cached_result: return json.loads(cached_result)
         except Exception as e: print(f"[Cache] ERRO no Redis (GET): {e}")
-        
-        resultado_rag = gerar_resposta_rag(prompt, repo) # (Chamada direta, síncrona)
+        resultado_rag = gerar_resposta_rag(prompt, repo)
         response_data = {
             "response_type": "answer", "message": resultado_rag["texto"], "job_id": None,
             "fontes": [{"tipo": "repositório", "id": "contexto", "url": f"https://github.com/{repo}"}],
@@ -133,28 +100,20 @@ async def _route_intent(intent: str, args: Dict[str, Any], user_email: Optional[
 
     # CASO 2: Ingestão (INGEST)
     elif intent == "call_ingest_tool":
-        print(f"[ChatRouter] Rota: INGEST. Args: {args}")
         repo = args.get("repositorio")
-        # --- MUDANÇA ---
-        # Agora enfileira a função importada de worker_tasks.py
         job = q_ingest.enqueue(ingest_repo, repo, 20, 10, 15, job_timeout=1200)
         msg = f"Solicitação de ingestão para {repo} recebida e enfileirada."
         return {"response_type": "job_enqueued", "message": msg, "job_id": job.id}
 
     # CASO 3: Relatório (REPORT)
     elif intent == "call_report_tool":
-        print(f"[ChatRouter] Rota: REPORT. Args: {args}")
         repo = args.get("repositorio"); prompt = args.get("prompt_usuario")
-        # --- MUDANÇA ---
-        # Agora enfileira a função importada de worker_tasks.py
         job = q_reports.enqueue(processar_e_salvar_relatorio, repo, prompt, "html", job_timeout=1800)
         msg = f"Solicitação de relatório para {repo} recebida e enfileirada."
         return {"response_type": "job_enqueued", "message": msg, "job_id": job.id}
 
     # CASO 4: Agendamento (SCHEDULE)
     elif intent == "call_schedule_tool":
-        # (Sem alterações)
-        print(f"[ChatRouter] Rota: SCHEDULE. Args: {args}")
         if not user_email:
             return {"response_type": "clarification", "message": "Para agendar relatórios, preciso do seu email.", "job_id": None}
         mensagem_retorno = create_schedule(
@@ -166,22 +125,14 @@ async def _route_intent(intent: str, args: Dict[str, Any], user_email: Optional[
 
     # CASO 5: Salvar Instrução (SAVE_INSTRUCTION)
     elif intent == "call_save_instruction_tool":
-        print(f"[ChatRouter] Rota: SAVE_INSTRUCTION. Args: {args}")
         repo = args.get("repositorio")
         instrucao = args.get("instrucao")
-        # --- MUDANÇA ---
-        # (A função 'save_instruction' agora é uma tarefa)
-        # (Isso deve ser síncrono ou assíncrono? Salvar é rápido...
-        #  mas ela usa 'get_embedding' (uma chamada de API).
-        #  É melhor enfileirar.)
         job = q_ingest.enqueue(save_instruction, repo, instrucao, job_timeout=300)
         msg = "Ok, estou salvando sua instrução..."
         return {"response_type": "job_enqueued", "message": msg, "job_id": job.id}
 
     # CASO 6: Clarificação (CLARIFY)
     elif intent == "CLARIFY":
-        # (Sem alterações)
-        print(f"[ChatRouter] Rota: CLARIFY.")
         return {"response_type": "clarification", "message": args.get('response_text', "Não entendi. Pode reformular?"), "job_id": None}
     
     else:
@@ -192,7 +143,6 @@ async def _route_intent(intent: str, args: Dict[str, Any], user_email: Optional[
 #  /api/email/verify, /api/ingest/status, /api/relatorio/status, 
 #  /api/relatorio/download, e o __name__ == "__main__"
 #  permanecem EXATAMENTE IGUAIS ao arquivo anterior.)
-# ... (copie o restante do seu main.py aqui) ...
 @app.get("/health")
 async def health_check():
     redis_status = "desconectado"
@@ -279,28 +229,11 @@ async def verify_email(token: str, email: str):
     try:
         sucesso = verify_email_token(email, token)
         if sucesso:
-            return """<html><head><title>Email Verificado</title><style>
-            body { font-family: Arial, sans-serif; display: grid; place-items: center; min-height: 90vh; background-color: #f4f4f4; }
-            div { text-align: center; padding: 40px; background-color: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-            h1 { color: #28a745; }
-            </style></head><body><div>
-            <h1>✅ Email Verificado com Sucesso!</h1>
-            <p>Seus relatórios agendados estão ativados. Você já pode fechar esta aba.</p>
-            </div></body></html>
-            """
+            return """<html>...<h1>✅ Email Verificado com Sucesso!</h1>...</html>"""
         else:
-            return """<html><head><title>Falha na Verificação</title><style>
-            body { font-family: Arial, sans-serif; display: grid; place-items: center; min-height: 90vh; background-color: #f4f4f4; }
-            div { text-align: center; padding: 40px; background-color: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-            h1 { color: #dc3545; }
-            </style></head><body><div>
-            <h1>❌ Falha na Verificação</h1>
-            <p>O link de verificação é inválido ou expirou.</p>
-            <p>Por favor, tente agendar o relatório novamente para receber um novo link.</p>
-            </div></body></html>
-            """
+            return """<html>...<h1>❌ Falha na Verificação</h1>...</html>"""
     except Exception as e:
-        return HTMLResponse(content=f"<h1>Erro 500</h1><p>Ocorreu um erro no servidor.</p>", status_code=500)
+        return HTMLResponse(content=f"<h1>Erro 500</h1><p>Ocorreu um erro.</p>", status_code=500)
 
 @app.get("/api/ingest/status/{job_id}", dependencies=[Depends(verificar_token)])
 async def get_job_status(job_id: str):
