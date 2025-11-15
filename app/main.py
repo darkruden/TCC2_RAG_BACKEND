@@ -1,5 +1,5 @@
 # CÓDIGO COMPLETO PARA: app/main.py
-# (Com o novo endpoint /api/relatorio/download/{filename} adicionado)
+# (Implementa o Roteador de Intenção no endpoint /api/chat)
 
 from dotenv import load_dotenv
 load_dotenv() # Garante que o .env seja lido
@@ -10,264 +10,261 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import os
-from app.services.metadata_service import MetadataService
-from app.services.llm_service import LLMService
-# --- INÍCIO DAS NOVAS ADIÇÕES (Parte 3) ---
 import redis
 from rq import Queue
-from app.services.ingest_service import ingest_repo # Importamos a função de ingestão
-# -----------------------------------------------
-
-# --- INÍCIO DAS ADIÇÕES PARA DOWNLOAD DE RELATÓRIO ---
 import io
 from fastapi.responses import StreamingResponse
 from supabase import create_client
-# --- FIM DAS ADIÇÕES PARA DOWNLOAD DE RELATÓRIO ---
 
-# Importações de serviços existentes
+# --- Serviços do Marco 1 (Novos) ---
+from app.services.ingest_service import ingest_repo
 from app.services.rag_service import gerar_resposta_rag
+# --- Serviços Antigos (Ainda usados) ---
+from app.services.llm_service import LLMService # Agora usado para 'get_intent'
 from app.services.report_service import ReportService 
 
-# --- INÍCIO DA CONFIGURAÇÃO DA FILA (Parte 3) ---
-# Pega a URL do Redis (do Heroku Add-on ou do nosso localhost)
-redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
-conn = redis.from_url(redis_url)
+# --- Configuração das Filas (RQ) ---
+try:
+    redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
+    conn = redis.from_url(redis_url)
+    conn.ping() # Testa a conexão
+    print("[Main] Conexão com Redis estabelecida.")
+except Exception as e:
+    print(f"[Main] ERRO CRÍTICO: Não foi possível conectar ao Redis em {redis_url}. {e}")
+    conn = None # Define como None para verificação
 
-# 'ingest' é o nome da fila que nosso worker.py está escutando
-q = Queue('ingest', connection=conn) 
+# Filas (só inicializa se o Redis conectar)
+if conn:
+    q_ingest = Queue('ingest', connection=conn) 
+    q_reports = Queue('reports', connection=conn)
+else:
+    q_ingest = None
+    q_reports = None
 
-q_reports = Queue('reports', connection=conn)
+# --- Inicialização dos Serviços Singleton ---
+try:
+    # LLMService é necessário para o roteador de intenção
+    llm_service = LLMService() 
+    print("[Main] LLMService inicializado.")
+except Exception as e:
+    print(f"[Main] ERRO: Falha ao inicializar LLMService: {e}")
+    llm_service = None
 
-metadata_service_relatorio = MetadataService()
-llm_service_relatorio = LLMService()
-report_service_relatorio = ReportService()
+# (O ReportService é instanciado no worker, não precisamos dele aqui)
 
 # Inicializar aplicação FastAPI
 app = FastAPI(
-    title="GitHub RAG API",
-    description="API para análise e rastreabilidade de requisitos de software usando RAG",
-    version="0.1.0"
+    title="GitHub RAG API (v2 - Chat)",
+    description="API unificada para análise e rastreabilidade de repositórios",
+    version="0.2.0"
 )
-
 
 # Configurar CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], # Permite todas as origens (bom para extensão)
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"], # Permite todos os métodos
+    allow_headers=["*"], # Permite todos os cabeçalhos
 )
 
-# Modelos de dados (Pydantic)
-class ConsultaRequest(BaseModel):
-    query: str
-    repositorio: str
-    filtros: Optional[Dict[str, Any]] = None
+# --- Modelos de Dados Pydantic (Atualizados) ---
 
-class RelatorioRequest(BaseModel):
-    repositorio: str
-    requisitos: Optional[List[str]] = None
+class ChatRequest(BaseModel):
+    """ O que o frontend envia para /api/chat """
     prompt: str
-    formato: str = "html"
+    # O 'repositorio' agora é detectado pela LLM
 
-class IngestRequest(BaseModel):
-    repositorio: str
-    issues_limit: Optional[int] = 20
-    prs_limit: Optional[int] = 10
-    commits_limit: Optional[int] = 15
-
-class ConsultaResponse(BaseModel):
-    resposta: str
-    fontes: List[Dict[str, Any]]
+class ChatResponse(BaseModel):
+    """ O que o backend envia de volta """
+    response_type: str # 'answer', 'job_enqueued', 'clarification', 'error'
+    message: str
+    job_id: Optional[str] = None
+    # 'fontes' e 'contexto' serão enviados em respostas 'answer'
+    fontes: Optional[List[Dict[str, Any]]] = None
     contexto: Optional[Dict[str, Any]] = None
 
-class RelatorioResponse(BaseModel):
-    url: str
-    formato: str
+# (Modelos antigos de Ingest/Consulta não são mais usados)
 
-class IngestResponse(BaseModel):
-    mensagem: str
-    job_id: Optional[str] = None
-
-# Dependência para verificar token de API
+# --- Dependência de Segurança (Token) ---
 async def verificar_token(x_api_key: str = Header(...)):
-    if x_api_key != os.getenv("API_TOKEN"):
+    """Verifica se o X-API-Key corresponde ao token de ambiente."""
+    api_token = os.getenv("API_TOKEN")
+    if not api_token:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Token de API não configurado no servidor."
+        )
+    if x_api_key != api_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token de API inválido"
         )
     return x_api_key
 
-# --- Rotas da API ---
+# --- Rotas da API (v2) ---
 
 @app.get("/health")
 async def health_check():
-    """Verifica se a API está online."""
-    try:
-        conn.ping()
-        redis_status = "conectado"
-    except Exception as e:
-        redis_status = f"desconectado ({e})"
-        
+    """Verifica o status da API e serviços dependentes (Redis)."""
+    redis_status = "desconectado"
+    if conn:
+        try:
+            conn.ping()
+            redis_status = "conectado"
+        except Exception as e:
+            redis_status = f"erro ({e})"
+            
     return {
         "status": "online", 
-        "version": "0.1.0",
+        "version": "0.2.0",
         "redis_status": redis_status
     }
 
-@app.get("/test")
-async def test_route():
-    """Endpoint de teste simples."""
-    return {"message": "Conexão com o backend estabelecida com sucesso!"}
-
-
-@app.post("/api/consultar", response_model=ConsultaResponse, dependencies=[Depends(verificar_token)])
-async def consultar(request: ConsultaRequest):
+# --- O NOVO "CÉREBRO": Endpoint /api/chat ---
+@app.post("/api/chat", response_model=ChatResponse, dependencies=[Depends(verificar_token)])
+async def handle_chat(request: ChatRequest):
     """
-    Recebe uma consulta, busca o contexto no RAG e retorna a resposta da IA.
-    """
-    try:
-        resultado = gerar_resposta_rag(request.query, request.repositorio)
-        
-        return {
-            "resposta": resultado["texto"],
-            "fontes": [
-                {
-                    "tipo": "repositório",
-                    "id": "contexto",
-                    "url": f"https://github.com/{request.repositorio}" 
-                }
-            ],
-            "contexto": {"trechos": resultado["contexto"]}
-        }
-    except Exception as e:
-        print(f"Erro em /api/consultar: {repr(e)}")
-        raise HTTPException(status_code=500, detail=f"Erro ao processar consulta RAG: {repr(e)}")
-
-
-@app.post("/api/relatorio", response_model=IngestResponse, dependencies=[Depends(verificar_token)])
-async def gerar_relatorio_async(request: RelatorioRequest):
-    """
-    Recebe um prompt, ENFILEIRA a tarefa de geração de relatório
-    e retorna IMEDIATAMENTE.
-    """
-    repo = request.repositorio
-    prompt = request.prompt
-    if not repo or not prompt:
-        raise HTTPException(status_code=400, detail="Campos 'repositorio' e 'prompt' são obrigatórios")
-
-    try:
-        job = q_reports.enqueue(
-            processar_e_salvar_relatorio, 
-            repo, 
-            prompt,
-            request.formato,
-            job_timeout=1800
-        )
-
-        msg = f"Solicitação de relatório para {repo} recebida e enfileirada."
-        print(f"[SUCESSO] {msg} Job ID: {job.id}")
-
-        return {"mensagem": msg, "job_id": job.id}
-
-    except Exception as e:
-        error_message = repr(e) 
-        print(f"Erro DETALHADO ao enfileirar relatório de {repo}: {error_message}")
-        raise HTTPException(status_code=500, detail=f"Erro ao enfileirar tarefa de relatório: {error_message}")
-
-@app.post("/api/consultar_arquivo", response_model=ConsultaResponse, dependencies=[Depends(verificar_token)])
-async def consultar_arquivo(
-    repositorio: str = Form(...),
-    arquivo: UploadFile = File(...)
-):
-    """
-    Recebe uma consulta via UPLOAD DE ARQUIVO, busca o contexto no RAG
-    e retorna a resposta da IA.
+    Endpoint unificado que roteia a intenção do usuário.
     """
     
-    if not arquivo:
-        raise HTTPException(status_code=400, detail="Nenhum arquivo enviado.")
-        
-    if arquivo.content_type not in ["text/plain", "text/markdown", "application/octet-stream"]:
-        print(f"[API] Tipo de arquivo rejeitado: {arquivo.content_type}")
-        raise HTTPException(status_code=400, detail="Tipo de arquivo inválido. Envie .txt ou .md.")
+    # --- Verificação de Serviços ---
+    if not llm_service:
+        raise HTTPException(status_code=500, detail="Serviço de LLM não inicializado no servidor.")
+    if not q_ingest or not q_reports:
+        raise HTTPException(status_code=500, detail="Serviço de Fila (Redis) não inicializado no servidor.")
+
+    user_prompt = request.prompt
+    if not user_prompt or not user_prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt não pode ser vazio.")
 
     try:
-        conteudo_bytes = await arquivo.read()
+        # 1. Chamar o Roteador de Intenção
+        intent_data = llm_service.get_intent(user_prompt)
+        intent = intent_data.get("intent")
+        args = intent_data.get("args", {})
+
+        # --- Lógica de Roteamento ---
         
-        try:
-            query_do_arquivo = conteudo_bytes.decode("utf-8")
-        except UnicodeDecodeError:
-            raise HTTPException(status_code=400, detail="Não foi possível decodificar o arquivo. Certifique-se de que está em UTF-8.")
+        # CASO 1: Consulta RAG (QUERY)
+        if intent == "call_query_tool":
+            print(f"[ChatRouter] Rota: QUERY. Args: {args}")
+            repo = args.get("repositorio")
+            prompt = args.get("prompt_usuario")
+            
+            # (Aqui implementaremos o Cache no Marco 3)
+            
+            # Chama o RAG Service (do Marco 1)
+            resultado_rag = gerar_resposta_rag(prompt, repo)
+            
+            return {
+                "response_type": "answer",
+                "message": resultado_rag["texto"],
+                "job_id": None,
+                "fontes": [ # Formato que o frontend antigo esperava
+                    {
+                        "tipo": "repositório",
+                        "id": "contexto",
+                        "url": f"https://github.com/{repo}"
+                    }
+                ],
+                "contexto": {"trechos": resultado_rag["contexto"]}
+            }
 
-        if not query_do_arquivo.strip():
-             raise HTTPException(status_code=400, detail="O arquivo enviado está vazio.")
+        # CASO 2: Ingestão (INGEST)
+        elif intent == "call_ingest_tool":
+            print(f"[ChatRouter] Rota: INGEST. Args: {args}")
+            repo = args.get("repositorio")
 
-        print(f"[API] Consulta recebida via arquivo: {arquivo.filename}")
+            # Enfileira o job (lógica do Marco 1)
+            job = q_ingest.enqueue(
+                ingest_repo, 
+                repo, 
+                20, 10, 15, # (Usando limites padrão por enquanto)
+                job_timeout=1200
+            )
+            msg = f"Solicitação de ingestão para {repo} recebida e enfileirada."
+            return {
+                "response_type": "job_enqueued",
+                "message": msg,
+                "job_id": job.id
+            }
 
-        resultado = gerar_resposta_rag(query_do_arquivo, repositorio)
+        # CASO 3: Relatório (REPORT)
+        elif intent == "call_report_tool":
+            print(f"[ChatRouter] Rota: REPORT. Args: {args}")
+            repo = args.get("repositorio")
+            prompt = args.get("prompt_usuario")
+
+            # Enfileira o job (lógica do report_service)
+            job = q_reports.enqueue(
+                processar_e_salvar_relatorio, 
+                repo, 
+                prompt,
+                "html", # (Formato padrão)
+                job_timeout=1800
+            )
+            msg = f"Solicitação de relatório para {repo} recebida e enfileirada."
+            return {
+                "response_type": "job_enqueued",
+                "message": msg,
+                "job_id": job.id
+            }
+
+        # CASO 4: Agendamento (SCHEDULE) - (Marco 5)
+        elif intent == "call_schedule_tool":
+            print(f"[ChatRouter] Rota: SCHEDULE (Não implementado).")
+            # (Aqui virá a lógica do Marco 5)
+            return {
+                "response_type": "clarification",
+                "message": "Desculpe, a função de agendamento de relatórios ainda está em desenvolvimento.",
+                "job_id": None
+            }
+
+        # CASO 5: Clarificação (CLARIFY)
+        elif intent == "CLARIFY":
+            print(f"[ChatRouter] Rota: CLARIFY. Msg: {intent_data.get('response_text')}")
+            # A LLM precisa de mais informações (ex: "Qual repositório?")
+            return {
+                "response_type": "clarification",
+                "message": intent_data.get("response_text", "Não entendi. Pode reformular?"),
+                "job_id": None
+            }
         
+        # CASO 6: Erro desconhecido
+        else:
+            raise Exception(f"Intenção desconhecida recebida da LLM: {intent}")
+
+    except Exception as e:
+        print(f"[ChatRouter] Erro CRÍTICO no /api/chat: {e}")
+        # Retorna o erro de forma estruturada
         return {
-            "resposta": resultado["texto"],
-            "fontes": [
-                {
-                    "tipo": "repositório",
-                    "id": "contexto",
-                    "url": f"https://github.com/{repositorio}"
-                }
-            ],
-            "contexto": {"trechos": resultado["contexto"]}
+            "response_type": "error",
+            "message": f"Erro ao processar sua solicitação: {e}",
+            "job_id": None
         }
-        
-    except Exception as e:
-        print(f"Erro em /api/consultar_arquivo: {repr(e)}")
-        raise HTTPException(status_code=500, detail=f"Erro ao processar arquivo: {repr(e)}")
 
-@app.post("/api/ingest", response_model=IngestResponse, dependencies=[Depends(verificar_token)])
-async def ingestar(dados: IngestRequest):
-    """
-    Recebe um repositório, ENFILEIRA a tarefa de ingestão e retorna IMEDIATAMENTE.
-    """
-    repo = dados.repositorio
-    if not repo:
-        raise HTTPException(status_code=400, detail="Campo 'repositorio' é obrigatório")
+# --- Endpoints Antigos REMOVIDOS ---
+# @app.post("/api/consultar", ...) -> Removido
+# @app.post("/api/relatorio", ...) -> Removido
+# @app.post("/api/ingest", ...) -> Removido
+# @app.post("/api/consultar_arquivo", ...) -> Removido
 
-    try:
-        job = q.enqueue(
-            ingest_repo, 
-            repo, 
-            dados.issues_limit, 
-            dados.prs_limit, 
-            dados.commits_limit,
-            job_timeout=1200
-)
-
-        msg = f"Solicitação de ingestão para {repo} recebida e enfileirada."
-        print(f"[SUCESSO] {msg} Job ID: {job.id}")
-
-        return {"mensagem": msg, "job_id": job.id}
-
-    except Exception as e:
-        error_message = repr(e) 
-        print(f"Erro DETALHADO ao enfileirar ingestão de {repo}: {error_message}")
-        raise HTTPException(status_code=500, detail=f"Erro ao enfileirar tarefa de ingestão: {error_message}")
-
+# --- Endpoints de Suporte (Permanecem) ---
 
 @app.get("/api/ingest/status/{job_id}", dependencies=[Depends(verificar_token)])
 async def get_job_status(job_id: str):
-    """
-    Verifica o status de um trabalho de ingestão na fila do RQ.
-    """
-    print(f"[API] Verificando status do Job ID: {job_id}")
+    """ Verifica o status de um job de INGESTÃO. """
+    if not q_ingest:
+        raise HTTPException(status_code=500, detail="Serviço de Fila (Redis) não inicializado.")
+        
+    print(f"[API] Verificando status do Job ID (Ingest): {job_id}")
     try:
-        job = q.fetch_job(job_id)
+        job = q_ingest.fetch_job(job_id)
     except Exception as e:
-        print(f"[API] Erro ao buscar job (Redis?): {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao conectar com a fila: {e}")
 
     if job is None:
-        print(f"[API] Job {job_id} não encontrado.")
         return {"status": "not_found"}
 
     status = job.get_status()
@@ -276,27 +273,24 @@ async def get_job_status(job_id: str):
 
     if status == 'finished':
         result = job.result
-        print(f"[API] Job {job_id} finalizado. Resultado: {result}")
     elif status == 'failed':
         error_info = str(job.exc_info)
-        print(f"[API] Job {job_id} falhou. Erro: {error_info}")
     
     return {"status": status, "result": result, "error": error_info}
 
 @app.get("/api/relatorio/status/{job_id}", dependencies=[Depends(verificar_token)])
 async def get_report_job_status(job_id: str):
-    """
-    Verifica o status de um trabalho de RELATÓRIO na fila do RQ.
-    """
-    print(f"[API] Verificando status do Job de Relatório ID: {job_id}")
+    """ Verifica o status de um job de RELATÓRIO. """
+    if not q_reports:
+        raise HTTPException(status_code=500, detail="Serviço de Fila (Redis) não inicializado.")
+
+    print(f"[API] Verificando status do Job ID (Report): {job_id}")
     try:
         job = q_reports.fetch_job(job_id)
     except Exception as e:
-        print(f"[API] Erro ao buscar job de relatório (Redis?): {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao conectar com a fila: {e}")
 
     if job is None:
-        print(f"[API] Job de Relatório {job_id} não encontrado.")
         return {"status": "not_found"}
 
     status = job.get_status()
@@ -305,52 +299,36 @@ async def get_report_job_status(job_id: str):
 
     if status == 'finished':
         result = job.result
-        print(f"[API] Job de Relatório {job_id} finalizado. Resultado: {result}")
     elif status == 'failed':
         error_info = str(job.exc_info)
-        print(f"[API] Job de Relatório {job_id} falhou. Erro: {error_info}")
     
     return {"status": status, "result": result, "error": error_info}
 
-
-# --- INÍCIO DA NOVA ROTA DE DOWNLOAD ---
-
 @app.get("/api/relatorio/download/{filename}", dependencies=[Depends(verificar_token)])
 async def download_report(filename: str):
-    """
-    Baixa um arquivo de relatório do Supabase Storage e o transmite
-    ao usuário, forçando o download.
-    """
+    """ Endpoint de Proxy para baixar o relatório do Supabase. """
     SUPABASE_BUCKET_NAME = "reports"
     
     try:
-        # 1. Inicializa o cliente storage
         url = os.getenv('SUPABASE_URL')
         key = os.getenv('SUPABASE_KEY')
         if not url or not key:
             raise Exception("Credenciais Supabase não encontradas no servidor")
             
         client = create_client(url, key)
-        
         print(f"[API-DOWNLOAD] Usuário solicitou download de: {filename}")
 
-        # 2. Baixa o arquivo do Supabase (em memória)
         file_bytes = client.storage.from_(SUPABASE_BUCKET_NAME).download(filename)
         
         if not file_bytes:
             raise HTTPException(status_code=404, detail="Arquivo de relatório não encontrado no storage.")
 
         print(f"[API-DOWNLOAD] Arquivo encontrado. Transmitindo para o usuário...")
+        headers = {'Content-Disposition': f'attachment; filename="{filename}"'}
 
-        # 3. Define os cabeçalhos para FORÇAR o download
-        headers = {
-            'Content-Disposition': f'attachment; filename="{filename}"'
-        }
-
-        # 4. Retorna o arquivo como um stream
         return StreamingResponse(
             io.BytesIO(file_bytes),
-            media_type='text/html', # Força o tipo correto
+            media_type='text/html',
             headers=headers
         )
 
@@ -358,10 +336,7 @@ async def download_report(filename: str):
         print(f"[API-DOWNLOAD] Erro ao baixar o arquivo: {repr(e)}")
         raise HTTPException(status_code=500, detail=f"Erro ao processar download do relatório: {repr(e)}")
 
-# --- FIM DA NOVA ROTA DE DOWNLOAD ---
-
-
-# Ponto de entrada para execução direta (testes locais)
+# Ponto de entrada (não muda)
 if __name__ == "__main__":
     import uvicorn
     print("Iniciando servidor Uvicorn local em http://0.0.0.0:8000")
