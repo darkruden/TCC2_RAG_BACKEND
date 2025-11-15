@@ -1,8 +1,10 @@
 # CÓDIGO COMPLETO PARA: app/services/llm_service.py
-# (Atualizado com 'Tools' mais inteligentes para agendamento)
+# (Adicionada a nova ferramenta 'call_save_instruction_tool')
 
 import os
 import json
+import pytz # Importação faltante
+from datetime import datetime # Importação faltante
 from openai import OpenAI
 from typing import List, Dict, Any, Optional
 
@@ -21,8 +23,9 @@ class LLMService:
             "total_tokens": 0
         }
 
-        # --- ATUALIZAÇÃO: Definição das Ferramentas para o Roteador de Intenção ---
+        # --- ATUALIZAÇÃO (Marco 7): Nova ferramenta ---
         self.intent_tools = [
+            # (Ferramenta 'call_ingest_tool' - Sem alterações)
             {
                 "type": "function",
                 "function": {
@@ -30,16 +33,12 @@ class LLMService:
                     "description": "Usado quando o usuário quer ingerir, re-ingerir ou indexar um repositório.",
                     "parameters": {
                         "type": "object",
-                        "properties": {
-                            "repositorio": {
-                                "type": "string",
-                                "description": "O nome do repositório no formato 'usuario/nome'.",
-                            }
-                        },
+                        "properties": {"repositorio": {"type": "string", "description": "O nome do repositório no formato 'usuario/nome'."}},
                         "required": ["repositorio"],
                     },
                 },
             },
+            # (Ferramenta 'call_query_tool' - Sem alterações)
             {
                 "type": "function",
                 "function": {
@@ -48,19 +47,14 @@ class LLMService:
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "repositorio": {
-                                "type": "string",
-                                "description": "O nome do repositório no formato 'usuario/nome'.",
-                            },
-                            "prompt_usuario": {
-                                "type": "string",
-                                "description": "A pergunta específica do usuário.",
-                            }
+                            "repositorio": {"type": "string", "description": "O nome do repositório no formato 'usuario/nome'."},
+                            "prompt_usuario": {"type": "string", "description": "A pergunta específica do usuário."}
                         },
                         "required": ["repositorio", "prompt_usuario"],
                     },
                 },
             },
+            # (Ferramenta 'call_report_tool' - Sem alterações)
             {
                 "type": "function",
                 "function": {
@@ -69,20 +63,14 @@ class LLMService:
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "repositorio": {
-                                "type": "string",
-                                "description": "O nome do repositório no formato 'usuario/nome'.",
-                            },
-                            "prompt_usuario": {
-                                "type": "string",
-                                "description": "A instrução para o relatório (ex: 'gere um gráfico de pizza dos commits').",
-                            }
+                            "repositorio": {"type": "string", "description": "O nome do repositório no formato 'usuario/nome'."},
+                            "prompt_usuario": {"type": "string", "description": "A instrução para o relatório (ex: 'gere um gráfico de pizza dos commits')."}
                         },
                         "required": ["repositorio", "prompt_usuario"],
                     },
                 },
             },
-            # --- FERRAMENTA DE AGENDAMENTO ATUALIZADA ---
+            # (Ferramenta 'call_schedule_tool' - Sem alterações)
             {
                 "type": "function",
                 "function": {
@@ -91,46 +79,48 @@ class LLMService:
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "repositorio": {
-                                "type": "string",
-                                "description": "O nome do repositório no formato 'usuario/nome'.",
-                            },
-                            "prompt_relatorio": {
-                                "type": "string",
-                                "description": "O que o relatório deve conter (ex: 'análise de commits da equipe').",
-                            },
-                            "frequencia": {
-                                "type": "string",
-                                "enum": ["daily", "weekly", "monthly"],
-                                "description": "A frequência do relatório. 'daily' para todo dia, 'weekly' para semanalmente.",
-                            },
-                            "hora": {
-                                "type": "string",
-                                "description": "A hora do dia para o envio, no formato HH:MM (24h).",
-                            },
-                            "timezone": {
-                                "type": "string",
-                                "description": "O fuso horário da solicitação (ex: 'America/Sao_Paulo', 'UTC').",
-                            }
+                            "repositorio": {"type": "string", "description": "O nome do repositório no formato 'usuario/nome'."},
+                            "prompt_relatorio": {"type": "string", "description": "O que o relatório deve conter (ex: 'análise de commits da equipe')."},
+                            "frequencia": {"type": "string", "enum": ["daily", "weekly", "monthly"], "description": "A frequência do relatório."},
+                            "hora": {"type": "string", "description": "A hora do dia para o envio, no formato HH:MM (24h)."},
+                            "timezone": {"type": "string", "description": "O fuso horário da solicitação (ex: 'America/Sao_Paulo', 'UTC')."}
                         },
                         "required": ["repositorio", "prompt_relatorio", "frequencia", "hora", "timezone"],
+                    },
+                },
+            },
+            # --- NOVA FERRAMENTA (Marco 7) ---
+            {
+                "type": "function",
+                "function": {
+                    "name": "call_save_instruction_tool",
+                    "description": "Usado quando o usuário quer salvar ou persistir uma instrução para futuros relatórios (ex: 'lembre-se disso', 'salve esta preferência').",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "repositorio": {
+                                "type": "string",
+                                "description": "O repositório ao qual esta instrução se aplica.",
+                            },
+                            "instrucao": {
+                                "type": "string",
+                                "description": "A instrução específica que o usuário quer salvar (ex: 'sempre use gráficos de pizza e tabelas').",
+                            }
+                        },
+                        "required": ["repositorio", "instrucao"],
                     },
                 },
             },
         ]
 
     # --- FUNÇÃO (get_intent) ---
+    # (Atualizada para incluir o fuso horário corretamente)
     def get_intent(self, user_query: str) -> Dict[str, Any]:
-        """
-        Usa a LLM e 'Tools' para classificar a intenção do usuário
-        e extrair as entidades necessárias.
-        """
         if not self.client:
             raise Exception("LLMService não inicializado.")
             
         print(f"[LLMService] Classificando intenção para: '{user_query}'")
-
-        # Adicionamos uma instrução sobre o fuso horário
+        
         system_prompt = f"""
 Você é um roteador de API. Sua tarefa é analisar o prompt do usuário e chamar a ferramenta correta.
 Se o usuário mencionar um fuso horário (ex: 'Brasília'), use a formatação IANA (ex: 'America/Sao_Paulo').
@@ -152,7 +142,6 @@ A data atual (contexto) é: {datetime.now(pytz.utc).astimezone(pytz.timezone('Am
             tool_calls = response_message.tool_calls
 
             if not tool_calls:
-                print(f"[LLMService] Nenhuma ferramenta chamada. A LLM respondeu: {response_message.content}")
                 return {"intent": "CLARIFY", "response_text": response_message.content}
 
             tool_call = tool_calls[0]
@@ -169,9 +158,7 @@ A data atual (contexto) é: {datetime.now(pytz.utc).astimezone(pytz.timezone('Am
             raise Exception(f"Erro ao processar sua solicitação na LLM: {e}")
     
     # --- FUNÇÕES (generate_response, generate_analytics_report, etc.) ---
-    # (O restante do arquivo 'llm_service.py' permanece 
-    #  exatamente como está no Marco 4, sem alterações)
-    # ... (copie o restante do seu arquivo llm_service.py aqui) ...
+    # (O restante do arquivo permanece exatamente como está no Marco 4)
     def generate_response(self, query: str, context: List[Dict[str, Any]]) -> Dict[str, Any]:
         formatted_context = self._format_context(context)
         system_prompt = """
