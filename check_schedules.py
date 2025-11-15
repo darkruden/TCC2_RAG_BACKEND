@@ -1,5 +1,5 @@
 # CÓDIGO COMPLETO PARA: check_schedules.py
-# (Corrigido para a nova sintaxe do 'rq' sem 'Connection')
+# (Corrigido para a nova sintaxe do 'rq' sem 'Connection') ok
 
 import os
 from datetime import datetime, time
