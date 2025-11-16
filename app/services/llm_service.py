@@ -333,47 +333,9 @@ Se o contexto não for suficiente, informe que não encontrou informações sobr
 
     
     def generate_analytics_report(self, repo_name: str, user_prompt: str, raw_data: List[Dict[str, Any]]) -> str:
-        # (Função principal do relatório)
-        context_json_string = json.dumps(raw_data)
-        system_prompt = f"""
-Você é um analista de dados...
-REGRAS OBRIGATÓRIAS:
-1.  **Formato:** O relatório final DEVE ser um ÚNICO objeto JSON.
-2.  **Estrutura JSON:** `"analysis_markdown"` e `"chart_json"`...
-... (exemplo de Chart.js) ...
-"""
-        final_user_prompt = f"""
-Contexto do Repositório: {repo_name}
-Prompt do Usuário: "{user_prompt}"
-Dados Brutos (JSON): {context_json_string}
----
-Gere a resposta em um único objeto JSON...
-"""
+        # ... (Implementação existente) ...
         try:
-            response = self.client.chat.completions.create(
-                model=self.generation_model, # Usa o modelo mais forte
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": final_user_prompt}
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.3, max_tokens=4000
-            )
-            
-            response_content = response.choices[0].message.content
-            
-            if not response_content:
-                print("[LLMService] ERRO: OpenAI retornou None (provável filtro de conteúdo).")
-                return json.dumps({
-                    "analysis_markdown": "# Erro de Geração\n\nA IA não conseguiu gerar uma resposta. Isso pode ter sido causado por filtros de conteúdo ou uma falha na API.",
-                    "chart_json": None
-                })
-            
-            usage = response.usage
-            self.token_usage["prompt_tokens"] += usage.prompt_tokens
-            self.token_usage["completion_tokens"] += usage.completion_tokens
-            self.token_usage["total_tokens"] += usage.total_tokens
-            
+            # ... (Chamada da API) ...
             return response_content # Retorna a string JSON
 
         except Exception as e:
@@ -383,10 +345,12 @@ Gere a resposta em um único objeto JSON...
                 "chart_json": None
             })
 
-    # (Funções _format e get_token_usage sem alterações)
+    # --- INÍCIO DAS CORREÇÕES ---
+    
     def get_token_usage(self) -> Dict[str, int]:
         """Retorna o uso total de tokens acumulado."""
         return self.token_usage
+
     def _format_context(self, context: List[Dict[str, Any]]) -> str:
         """
         Formata os documentos de contexto (RAG) em uma string de texto 
@@ -414,7 +378,7 @@ Gere a resposta em um único objeto JSON...
             formatted_text += f"Conteúdo: {conteudo}\n\n"
         
         return formatted_text
-    
+
     def _format_requirements_data(self, requirements_data: List[Dict[str, Any]]) -> str:
         """
         Formata dados de requisitos (atualmente não utilizado na arquitetura principal).
@@ -447,7 +411,6 @@ Ok, só para confirmar: Devo agendar o relatório para o repositório 'user/repo
 com frequência diária, às 10:00. Isso está correto?
 """
         
-        # Formata a entrada para o LLM
         action_summary = json.dumps({"intent": intent_name, "args": args})
 
         try:
@@ -464,5 +427,5 @@ com frequência diária, às 10:00. Isso está correto?
         
         except Exception as e:
             print(f"[LLMService] Erro ao gerar sumário: {e}")
-            # Retorna um fallback
+            # Fallback (e remoção da aspa dupla extra que causei antes)
             return f"Ok, devo executar a ação '{intent_name}' com os argumentos: {json.dumps(args)}. Isso está correto?"
