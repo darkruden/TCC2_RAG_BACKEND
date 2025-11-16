@@ -1,5 +1,5 @@
-# CÓDIGO COMPLETO PARA: app/services/scheduler_service.py
-# (NOVO ARQUIVO)
+# CÓDIGO ATUALIZADO PARA: app/services/scheduler_service.py
+# (Adicionados logs de depuração)
 
 import os
 import pytz
@@ -60,7 +60,10 @@ def create_schedule(user_email: str, repo: str, prompt: str, freq: str, hora: st
     if not supabase:
         raise Exception("Serviço Supabase não está inicializado.")
     
-    print(f"[SchedulerService] Criando agendamento para {user_email} em {repo}")
+    # --- INÍCIO DA ADIÇÃO (DEBUG) ---
+    print(f"--- [DEBUG create_schedule] ---")
+    print(f"Email: {user_email}, Repo: {repo}, Freq: {freq}, Hora: {hora}, TZ: {tz}")
+    # --- FIM DA ADIÇÃO (DEBUG) ---
     
     try:
         # 1. Converte a hora local para a hora UTC (que o 'check_schedules.py' usa)
@@ -77,12 +80,13 @@ def create_schedule(user_email: str, repo: str, prompt: str, freq: str, hora: st
             email_status = email_check.data[0]
             if email_status["verificado"]:
                 email_ja_verificado = True
-                print(f"[SchedulerService] Email {user_email} já está verificado.")
+                print("[SchedulerService-Debug] Email JÁ está verificado.") # <-- LOG
             else:
                 token = email_status["token_verificacao"]
+                print("[SchedulerService-Debug] Email NÃO verificado, usando token existente.") # <-- LOG
         else:
             # Email nunca visto, cria novo registro de verificação
-            print(f"[SchedulerService] Email {user_email} é novo. Criando registro de verificação.")
+            print("[SchedulerService-Debug] Email novo. Criando registro de verificação.") # <-- LOG
             new_email_entry = supabase.table("emails_verificados").insert({"email": user_email}) \
                 .execute()
             token = new_email_entry.data[0]["token_verificacao"]
@@ -103,10 +107,11 @@ def create_schedule(user_email: str, repo: str, prompt: str, freq: str, hora: st
         
         # 4. Envia email de verificação (se necessário)
         if not email_ja_verificado and token:
-            print(f"[SchedulerService] Enviando email de verificação para {user_email}.")
+            print("[SchedulerService-Debug] ENVIANDO email de verificação...") # <-- LOG
             send_verification_email(user_email, str(token))
             return "Agendamento criado. Por favor, verifique seu email para ativar."
         else:
+            print("[SchedulerService-Debug] PULO envio de email (usuário já verificado).") # <-- LOG
             return "Agendamento criado e ativado com sucesso."
 
     except Exception as e:
