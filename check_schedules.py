@@ -1,5 +1,5 @@
-# CÓDIGO COMPLETO PARA: check_schedules.py
-# (Corrigido para a nova sintaxe do 'rq' sem 'Connection') ok
+# CÓDIGO COMPLETO E ATUALIZADO PARA: check_schedules.py
+# (Atualizado para Multi-Tenancy com 'user_id')
 
 import os
 from datetime import datetime, time
@@ -7,7 +7,7 @@ import pytz
 from dotenv import load_dotenv
 from supabase import create_client, Client
 import redis
-from rq import Queue # <-- 'Connection' NÃO é importada
+from rq import Queue
 
 load_dotenv()
 
@@ -24,10 +24,8 @@ try:
     conn.ping()
     print("[Scheduler] Conectado ao Redis.")
     
-    # Lê o prefixo (deve ser o mesmo do worker)
     QUEUE_PREFIX = os.getenv('RQ_QUEUE_PREFIX', '')
     
-    # Instancia a Fila com a sintaxe moderna (passando a conexão)
     q_reports = Queue(f'{QUEUE_PREFIX}reports', connection=conn)
 
 except Exception as e:
@@ -37,6 +35,7 @@ except Exception as e:
 def fetch_and_queue_jobs():
     """
     Busca no Supabase por agendamentos que precisam rodar e os enfileira.
+    Agora inclui o user_id.
     """
     print("[Scheduler] Verificando agendamentos...")
     
@@ -46,10 +45,13 @@ def fetch_and_queue_jobs():
         
         print(f"[Scheduler] Hora atual (UTC, arredondada): {current_utc_hour}")
 
-        response = supabase.table("agendamentos").select("*") \
+        # --- INÍCIO DA ATUALIZAÇÃO ---
+        # 1. Seleciona o user_id junto com os outros campos
+        response = supabase.table("agendamentos").select("id, user_email, repositorio, prompt_relatorio, ultimo_envio, user_id") \
             .eq("ativo", True) \
             .eq("hora_utc", str(current_utc_hour)) \
             .execute()
+        # --- FIM DA ATUALIZAÇÃO ---
 
         if not response.data:
             print("[Scheduler] Nenhum agendamento encontrado para esta hora.")
@@ -66,17 +68,27 @@ def fetch_and_queue_jobs():
                     print(f"[Scheduler] Pulando job {agendamento['id']} (já enviado hoje).")
                     continue
             
-            print(f"[Scheduler] Enfileirando relatório para: {agendamento['user_email']}")
+            # --- INÍCIO DA ATUALIZAÇÃO ---
+            # 2. Pega o user_id (essencial)
+            user_id = agendamento.get("user_id")
+            if not user_id:
+                print(f"[Scheduler] ERRO: Pulando job {agendamento['id']} (user_id está nulo no banco).")
+                continue
             
-            # Enfileira a tarefa (sem alterações aqui)
+            print(f"[Scheduler] Enfileirando relatório (User: {user_id}) para: {agendamento['user_email']}")
+            
+            # 3. Passa o user_id como o último argumento
             q_reports.enqueue(
                 'worker_tasks.enviar_relatorio_agendado', 
                 agendamento['id'],
                 agendamento['user_email'],
                 agendamento['repositorio'],
                 agendamento['prompt_relatorio'],
+                user_id, # <-- Passa o user_id para o worker
                 job_timeout=1800
             )
+            # --- FIM DA ATUALIZAÇÃO ---
+            
             jobs_enfileirados += 1
 
         print(f"[Scheduler] {jobs_enfileirados} novos jobs de relatório foram enfileirados.")
