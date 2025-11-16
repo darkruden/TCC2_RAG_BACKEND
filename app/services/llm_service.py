@@ -23,15 +23,6 @@ class LLMService:
             "total_tokens": 0
         }
 
-        # Definição das Ferramentas (Sem alterações)
-        self.intent_tools = [
-            {"type": "function", "function": {"name": "call_ingest_tool", ...}},
-            {"type": "function", "function": {"name": "call_query_tool", ...}},
-            {"type": "function", "function": {"name": "call_report_tool", ...}},
-            {"type": "function", "function": {"name": "call_schedule_tool", ...}},
-            {"type": "function", "function": {"name": "call_save_instruction_tool", ...}},
-        ]
-        # (Definições de ferramentas omitidas por brevidade)
         self.intent_tools = [
             {
                 "type": "function",
