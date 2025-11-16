@@ -387,3 +387,45 @@ Gere a resposta em um único objeto JSON...
     def get_token_usage(self) -> Dict[str, int]: ...
     def _format_context(self, context: List[Dict[str, Any]]) -> str: ...
     def _format_requirements_data(self, requirements_data: List[Dict[str, Any]]) -> str: ...
+
+    def summarize_action_for_confirmation(self, intent_name: str, args: Dict[str, Any]) -> str:
+        """
+        Gera uma pergunta de confirmação humanizada baseada na ação e nos argumentos.
+        """
+        print(f"[LLMService] Gerando sumário de confirmação para {intent_name}...")
+        
+        system_prompt = f"""
+Você é um assistente de confirmação. Sua tarefa é ler um JSON de argumentos e traduzi-lo 
+em uma pergunta de confirmação clara, educada e em português.
+
+- Comece com 'Ok, só para confirmar...'
+- Resuma todos os argumentos de forma fluida.
+- Termine com a pergunta 'Isso está correto?'
+
+Exemplo de Entrada:
+{{"intent": "agendamento", "args": {{"repositorio": "user/repo", "frequencia": "daily", "hora": "10:00"}}}}
+
+Exemplo de Saída:
+Ok, só para confirmar: Devo agendar o relatório para o repositório 'user/repo', 
+com frequência diária, às 10:00. Isso está correto?
+"""
+        
+        # Formata a entrada para o LLM
+        action_summary = json.dumps({"intent": intent_name, "args": args})
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.routing_model, # Usa o modelo rápido
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": action_summary}
+                ],
+                temperature=0.1
+            )
+            confirmation_text = response.choices[0].message.content
+            return confirmation_text
+        
+        except Exception as e:
+            print(f"[LLMService] Erro ao gerar sumário: {e}")
+            # Retorna um fallback
+            return f"Ok, devo executar a ação '{intent_name}' com os argumentos: {json.dumps(args)}. Isso está correto?"

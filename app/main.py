@@ -121,19 +121,29 @@ async def verify_github_signature(request: Request, x_hub_signature_256: str = H
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro ao processar assinatura do webhook.")
 
+# Palavras-chave que contam como uma confirmação do usuário
+CONFIRMATION_WORDS = ["sim", "s", "yes", "y", "correto", "confirmo", "pode", "isso", "isso mesmo"]
 
 # --- FUNÇÃO HELPER: Roteador de Intenção (Corpo completo) ---
-async def _route_intent(intent: str, args: Dict[str, Any], user_email: Optional[str] = None) -> Dict[str, Any]:
+# --- FUNÇÃO HELPER: Roteador de Intenção (ATUALIZADA) ---
+async def _route_intent(
+    intent: str, 
+    args: Dict[str, Any], 
+    user_email: Optional[str] = None,
+    last_user_prompt: str = "" # <-- NOVO: O que o usuário acabou de digitar
+) -> Dict[str, Any]:
     
     if not conn or not q_ingest or not q_reports:
         return {"response_type": "error", "message": "Erro de servidor: O serviço de fila (Redis) está indisponível.", "job_id": None}
 
+    # Verifica se a última mensagem foi uma confirmação
+    is_confirmation = last_user_prompt.strip().lower() in CONFIRMATION_WORDS
+
     # CASO 1: Consulta RAG (QUERY)
     if intent == "call_query_tool":
+        # (Sem alterações)
         print(f"[ChatRouter] Rota: QUERY. Args: {args}")
         repo = args.get("repositorio"); prompt = args.get("prompt_usuario")
-        
-        # Retorna a instrução para o frontend chamar o stream
         return {
             "response_type": "stream_answer", 
             "message": json.dumps({"repositorio": repo, "prompt_usuario": prompt}),
@@ -142,25 +152,51 @@ async def _route_intent(intent: str, args: Dict[str, Any], user_email: Optional[
 
     # CASO 2: Ingestão (INGEST)
     elif intent == "call_ingest_tool":
+        # (Sem alterações)
         repo = args.get("repositorio")
         job = q_ingest.enqueue(ingest_repo, repo, 20, 10, 15, job_timeout=1200)
         return {"response_type": "job_enqueued", "message": f"Solicitação de ingestão para {repo} recebida...", "job_id": job.id}
     
     # CASO 3: Relatório (REPORT)
     elif intent == "call_report_tool":
+        # (Sem alterações)
         repo = args.get("repositorio"); prompt = args.get("prompt_usuario")
         job = q_reports.enqueue(processar_e_salvar_relatorio, repo, prompt, "html", job_timeout=1800)
         return {"response_type": "job_enqueued", "message": f"Solicitação de relatório para {repo} recebida...", "job_id": job.id}
     
+    # --- INÍCIO DA ATUALIZAÇÃO (Fluxo de Confirmação) ---
+    
     # CASO 4: Agendamento (SCHEDULE)
     elif intent == "call_schedule_tool":
-        print(f"[ChatRouter] Rota: SCHEDULE. Args: {args}") # <-- LOG ADICIONAL AQUI
-        if not user_email: return {"response_type": "clarification", "message": "Para agendar relatórios, preciso do seu email.", "job_id": None}
-        msg = create_schedule(user_email, **args)
-        return {"response_type": "answer", "message": msg, "job_id": None}
+        print(f"[ChatRouter] Rota: SCHEDULE. Args: {args}")
+        
+        # 1. Verifica se o email existe (a clarificação do email acontece antes da confirmação)
+        if not user_email: 
+            return {"response_type": "clarification", "message": "Para agendar relatórios, preciso do seu email.", "job_id": None}
+        
+        # 2. Verifica se a última mensagem foi um "Sim"
+        if is_confirmation:
+            print("[ChatRouter] Confirmação recebida. Executando agendamento.")
+            msg = create_schedule(user_email, **args)
+            return {"response_type": "answer", "message": msg, "job_id": None}
+        else:
+            # 3. É a primeira vez? Pede confirmação.
+            print("[ChatRouter] Agendamento detectado. Solicitando confirmação.")
+            if not llm_service:
+                return {"response_type": "error", "message": "Erro: LLMService não inicializado para confirmação."}
+            
+            # Gera o sumário "Ok, só para confirmar..."
+            confirmation_text = llm_service.summarize_action_for_confirmation(
+                intent_name="agendamento", 
+                args=args
+            )
+            return {"response_type": "clarification", "message": confirmation_text, "job_id": None}
+    
+    # --- FIM DA ATUALIZAÇÃO ---
     
     # CASO 5: Salvar Instrução (SAVE_INSTRUCTION)
     elif intent == "call_save_instruction_tool":
+        # (Sem alterações)
         repo = args.get("repositorio"); instrucao = args.get("instrucao")
         job = q_ingest.enqueue(save_instruction, repo, instrucao, job_timeout=300)
         return {"response_type": "job_enqueued", "message": "Ok, estou salvando sua instrução...", "job_id": job.id}
@@ -181,37 +217,28 @@ async def health_check():
         except Exception as e: redis_status = f"erro ({e})"
     return {"status": "online", "version": "0.4.0", "redis_status": redis_status}
 
-@app.post("/api/chat", response_model=ChatResponse, dependencies=[Depends(verificar_token)])
-async def handle_chat(request: ChatRequest):
+@app.post("/api/chat_file", response_model=ChatResponse, dependencies=[Depends(verificar_token)])
+async def handle_chat_with_file(
+    prompt: str = Form(...), 
+    messages_json: str = Form(...),
+    user_email: Optional[str] = Form(None), 
+    arquivo: UploadFile = File(...)
+):
     if not llm_service or not conn: raise HTTPException(status_code=500, detail="Serviços de backend não inicializados.")
-    
-    user_email = request.user_email
-    
-    # --- INÍCIO DA ATUALIZAÇÃO (Memória de Chat) ---
-    
-    # 1. Formata o histórico de mensagens em um único prompt
-    history_lines = []
-    for msg in request.messages:
-        # Formata como "User: [texto]" ou "Bot: [texto]"
-        history_lines.append(f"{msg.sender.capitalize()}: {msg.text}")
-    
-    full_prompt = "\n".join(history_lines)
-    # --- FIM DA ATUALIZAÇÃO ---
-
-    if not full_prompt.strip(): raise HTTPException(status_code=400, detail="Prompt não pode ser vazio.")
-    
     try: 
-        intent_data = llm_service.get_intent(full_prompt) # Envia o histórico completo
+        # ... (Lógica de formatar o prompt combinado) ...
+        # (O 'prompt' aqui É a 'last_user_prompt')
+        
+        intent_data = llm_service.get_intent(combined_prompt) 
         intent = intent_data.get("intent"); args = intent_data.get("args", {})
         
-        print(f"--- [DEBUG /api/chat] ---")
-        print(f"Prompt (Completo): {full_prompt[-500:]}") # Log dos últimos 500 chars
-        print(f"Intenção detectada: {intent}")
-        print(f"Argumentos extraídos: {args}")
-        print(f"---------------------------")
+        # ... (Logs de depuração) ...
         
         if intent == "CLARIFY": args["response_text"] = intent_data.get("response_text")
-        return await _route_intent(intent, args, user_email)
+        
+        # 3. Passa o 'prompt' (que é a última mensagem) para o roteador
+        return await _route_intent(intent, args, user_email, prompt) 
+    
     except Exception as e:
         print(f"[ChatRouter] Erro CRÍTICO no /api/chat: {e}")
         return {"response_type": "error", "message": f"Erro: {e}", "job_id": None}
