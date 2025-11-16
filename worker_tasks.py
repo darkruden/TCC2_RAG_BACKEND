@@ -13,7 +13,7 @@ from supabase import create_client
 import os
 from datetime import datetime
 import pytz
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # -------------------------------------------------------------------
 # TAREFA (do Marco 1, 6, 7): Ingestão
@@ -166,11 +166,20 @@ def processar_e_salvar_relatorio(repo_name: str, user_prompt: str, format: str =
 # TAREFA (do Marco 5): Relatório Agendado por Email
 # -------------------------------------------------------------------
 
-def enviar_relatorio_agendado(agendamento_id: str, user_email: str, repo_name: str, user_prompt: str):
+def enviar_relatorio_agendado(
+    agendamento_id: Optional[str], # <-- ATUALIZAÇÃO: De str para Optional[str]
+    user_email: str, 
+    repo_name: str, 
+    user_prompt: str
+):
     """
     Tarefa do Worker (RQ) que gera um relatório e o ENVIA POR EMAIL.
+    Se 'agendamento_id' for None, é um envio imediato e a DB não é atualizada.
     """
-    print(f"[WorkerTask] Iniciando relatório agendado {agendamento_id} para {user_email}")
+    if agendamento_id:
+        print(f"[WorkerTask] Iniciando relatório agendado {agendamento_id} para {user_email}")
+    else:
+        print(f"[WorkerTask] Iniciando relatório imediato (once) para {user_email}")
     
     try:
         # 1. Instancia os serviços
@@ -204,23 +213,27 @@ def enviar_relatorio_agendado(agendamento_id: str, user_email: str, repo_name: s
         )
         
         print(f"[WorkerTask] Enviando email para {user_email}...")
-        subject = f"Seu Relatório Agendado: {repo_name}"
+        subject = f"Seu Relatório Solicitado: {repo_name}" # Ajustado para "Solicitado"
         send_report_email(user_email, subject, html_content)
         
-        # 6. Atualiza o 'ultimo_envio'
-        url: str = os.getenv("SUPABASE_URL")
-        key: str = os.getenv("SUPABASE_KEY")
-        supabase: Client = create_client(url, key)
-        
-        supabase.table("agendamentos").update({
-            "ultimo_envio": datetime.now(pytz.utc).isoformat()
-        }).eq("id", agendamento_id).execute()
-        
-        print(f"[WorkerTask] Relatório agendado {agendamento_id} concluído com sucesso.")
+        # --- INÍCIO DA ATUALIZAÇÃO ---
+        # 6. Atualiza o 'ultimo_envio' (APENAS se for um job agendado)
+        if agendamento_id:
+            url: str = os.getenv("SUPABASE_URL")
+            key: str = os.getenv("SUPABASE_KEY")
+            supabase: Client = create_client(url, key)
+            
+            supabase.table("agendamentos").update({
+                "ultimo_envio": datetime.now(pytz.utc).isoformat()
+            }).eq("id", agendamento_id).execute()
+            
+            print(f"[WorkerTask] Relatório agendado {agendamento_id} concluído com sucesso.")
+        else:
+            print(f"[WorkerTask] Relatório imediato para {user_email} concluído.")
+        # --- FIM DA ATUALIZAÇÃO ---
 
     except Exception as e:
-        print(f"[WorkerTask] ERRO CRÍTICO no job {agendamento_id}: {e}")
-        # --- CORREÇÃO (Bug 1) ---
+        print(f"[WorkerTask] ERRO CRÍTICO no job de {user_email}: {e}")
         raise e
 
 # -------------------------------------------------------------------

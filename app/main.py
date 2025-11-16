@@ -124,7 +124,7 @@ async def _route_intent(
     intent: str, 
     args: Dict[str, Any], 
     user_email: Optional[str] = None,
-    last_user_prompt: str = "" # O que o usuário acabou de digitar
+    last_user_prompt: str = ""
 ) -> Dict[str, Any]:
     
     if not conn or not q_ingest or not q_reports:
@@ -177,40 +177,55 @@ async def _route_intent(
             # Se não, pede
             return {"response_type": "clarification", "message": "Para agendar relatórios, preciso do seu email.", "job_id": None}
 
-        # 4. Prepara os argumentos para a confirmação (incluindo o email)
-        confirmation_args = {
-            "repositorio": repo,
-            "prompt_relatorio": prompt,
-            "frequencia": freq,
-            "hora": hora,
-            "timezone": tz,
-            "user_email": final_email # Adiciona o email para a confirmação
-        }
-        # --- FIM DA ATUALIZAÇÃO ---
-        
-        # 5. Verifica se a última mensagem foi um "Sim"
-        if is_confirmation:
-            print(f"[ChatRouter] Confirmação recebida. Executando agendamento para {final_email}.")
-            msg = create_schedule(
-                user_email=final_email, # <-- Usa o e-mail final
-                repo=repo, 
-                prompt=prompt, 
-                freq=freq, 
-                hora=hora, 
-                tz=tz
-            )
-            return {"response_type": "answer", "message": msg, "job_id": None}
-        else:
-            # 6. É a primeira vez? Pede confirmação.
-            print("[ChatRouter] Agendamento detectado. Solicitando confirmação.")
-            if not llm_service:
-                return {"response_type": "error", "message": "Erro: LLMService não inicializado para confirmação."}
+        # --- INÍCIO DA ATUALIZAÇÃO (Lógica "Once" vs "Agendado") ---
+
+        # 4. LÓGICA DE ENVIO IMEDIATO (freq == "once")
+        if freq == "once":
+            print(f"[ChatRouter] Envio imediato (once) detectado. Enfileirando job de email para {final_email}.")
             
-            confirmation_text = llm_service.summarize_action_for_confirmation(
-                intent_name="agendamento", 
-                args=confirmation_args # Passa os args com o email
+            job = q_reports.enqueue(
+                'worker_tasks.enviar_relatorio_agendado', 
+                agendamento_id=None, # <-- Passa None para pular a DB
+                user_email=final_email,
+                repo_name=repo,
+                user_prompt=prompt,
+                job_timeout=1800
             )
-            return {"response_type": "clarification", "message": confirmation_text, "job_id": None}
+            
+            # Responde imediatamente, sem confirmação
+            return {"response_type": "answer", "message": f"Ok! Estou preparando seu relatório para `{repo}` e o enviarei para `{final_email}` em breve.", "job_id": job.id}
+
+        # 5. LÓGICA DE AGENDAMENTO (daily, weekly, etc.)
+        else:
+            # Prepara os argumentos para a confirmação
+            confirmation_args = {
+                "repositorio": repo, "prompt_relatorio": prompt,
+                "frequencia": freq, "hora": hora, "timezone": tz,
+                "user_email": final_email
+            }
+        
+            # 5a. Verifica se é a confirmação ("Sim")
+            if is_confirmation:
+                print(f"[ChatRouter] Confirmação recebida. Criando agendamento para {final_email}.")
+                msg = create_schedule(
+                    user_email=final_email, repo=repo, prompt=prompt, 
+                    freq=freq, hora=hora, tz=tz
+                )
+                return {"response_type": "answer", "message": msg, "job_id": None}
+            
+            # 5b. Pede a confirmação
+            else:
+                print("[ChatRouter] Agendamento detectado. Solicitando confirmação.")
+                if not llm_service:
+                    return {"response_type": "error", "message": "Erro: LLMService não inicializado para confirmação."}
+                
+                confirmation_text = llm_service.summarize_action_for_confirmation(
+                    intent_name="agendamento", 
+                    args=confirmation_args
+                )
+                return {"response_type": "clarification", "message": confirmation_text, "job_id": None}
+        
+        # --- FIM DA ATUALIZAÇÃO ---
     
     # CASO 5: Salvar Instrução (SAVE_INSTRUCTION)
     elif intent == "call_save_instruction_tool":
