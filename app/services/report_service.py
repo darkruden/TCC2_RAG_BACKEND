@@ -7,7 +7,7 @@ import uuid
 import requests
 import json
 from supabase import create_client, Client
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 from app.services.metadata_service import MetadataService
 from app.services.llm_service import LLMService
 
