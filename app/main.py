@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 from fastapi import FastAPI, Depends, HTTPException, status, Header, Form, File, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 import os
 import redis
@@ -70,6 +70,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+class Message(BaseModel):
+    # O frontend envia 'id', mas não precisamos dele no backend
+    sender: str
+    text: str
+
+class ChatRequest(BaseModel):
+    messages: List[Message]
+    user_email: Optional[str] = None
+
 
 # --- Modelos Pydantic (Atualizados) ---
 class ChatRequest(BaseModel):
@@ -175,35 +184,74 @@ async def health_check():
 @app.post("/api/chat", response_model=ChatResponse, dependencies=[Depends(verificar_token)])
 async def handle_chat(request: ChatRequest):
     if not llm_service or not conn: raise HTTPException(status_code=500, detail="Serviços de backend não inicializados.")
-    user_prompt = request.prompt
-    if not user_prompt.strip(): raise HTTPException(status_code=400, detail="Prompt não pode ser vazio.")
+    
+    user_email = request.user_email
+    
+    # --- INÍCIO DA ATUALIZAÇÃO (Memória de Chat) ---
+    
+    # 1. Formata o histórico de mensagens em um único prompt
+    history_lines = []
+    for msg in request.messages:
+        # Formata como "User: [texto]" ou "Bot: [texto]"
+        history_lines.append(f"{msg.sender.capitalize()}: {msg.text}")
+    
+    full_prompt = "\n".join(history_lines)
+    # --- FIM DA ATUALIZAÇÃO ---
+
+    if not full_prompt.strip(): raise HTTPException(status_code=400, detail="Prompt não pode ser vazio.")
+    
     try: 
-        intent_data = llm_service.get_intent(user_prompt)
+        intent_data = llm_service.get_intent(full_prompt) # Envia o histórico completo
         intent = intent_data.get("intent"); args = intent_data.get("args", {})
         
-        # --- LOG DE DEPURAÇÃO ---
         print(f"--- [DEBUG /api/chat] ---")
-        print(f"Prompt: {user_prompt}")
+        print(f"Prompt (Completo): {full_prompt[-500:]}") # Log dos últimos 500 chars
         print(f"Intenção detectada: {intent}")
         print(f"Argumentos extraídos: {args}")
         print(f"---------------------------")
-        # --- FIM DO LOG ---
         
         if intent == "CLARIFY": args["response_text"] = intent_data.get("response_text")
-        return await _route_intent(intent, args, request.user_email)
+        return await _route_intent(intent, args, user_email)
     except Exception as e:
         print(f"[ChatRouter] Erro CRÍTICO no /api/chat: {e}")
         return {"response_type": "error", "message": f"Erro: {e}", "job_id": None}
 
 @app.post("/api/chat_file", response_model=ChatResponse, dependencies=[Depends(verificar_token)])
-async def handle_chat_with_file(prompt: str = Form(...), user_email: Optional[str] = Form(None), arquivo: UploadFile = File(...)):
+async def handle_chat_with_file(
+    prompt: str = Form(...), 
+    messages_json: str = Form(...), # <-- NOVO
+    user_email: Optional[str] = Form(None), 
+    arquivo: UploadFile = File(...)
+):
     if not llm_service or not conn: raise HTTPException(status_code=500, detail="Serviços de backend não inicializados.")
     try: 
         conteudo_bytes = await arquivo.read(); file_text = conteudo_bytes.decode("utf-8")
         if not file_text.strip(): raise HTTPException(status_code=400, detail="O arquivo enviado está vazio.")
-        combined_prompt = f"Prompt: \"{prompt}\"\n\nArquivo ({arquivo.filename}):\n\"{file_text}\""
-        intent_data = llm_service.get_intent(combined_prompt)
+
+        # --- INÍCIO DA ATUALIZAÇÃO (Memória de Chat) ---
+        
+        # 1. Formata o histórico
+        try:
+            messages = json.loads(messages_json)
+            history_text = "\n".join([f"{m['sender'].capitalize()}: {m['text']}" for m in messages])
+        except json.JSONDecodeError:
+            history_text = ""
+        
+        # 2. Cria o prompt combinado
+        # O 'prompt' é a mensagem atual do usuário
+        # O 'history_text' são as mensagens anteriores
+        combined_prompt = f"{history_text}\nUser: {prompt}\n\nArquivo ({arquivo.filename}):\n\"{file_text}\""
+        # --- FIM DA ATUALIZAÇÃO ---
+
+        intent_data = llm_service.get_intent(combined_prompt) # Envia o histórico completo
         intent = intent_data.get("intent"); args = intent_data.get("args", {})
+        
+        print(f"--- [DEBUG /api/chat_file] ---")
+        print(f"Prompt Combinado: {combined_prompt[-500:]}...") # Log dos últimos 500 chars
+        print(f"Intenção detectada: {intent}")
+        print(f"Argumentos extraídos: {args}")
+        print(f"------------------------------")
+        
         if intent == "CLARIFY": args["response_text"] = intent_data.get("response_text")
         return await _route_intent(intent, args, user_email)
     except Exception as e:
