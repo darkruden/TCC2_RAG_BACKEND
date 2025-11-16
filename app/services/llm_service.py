@@ -1,5 +1,5 @@
-# CÓDIGO COMPLETO PARA: app/services/llm_service.py
-# (Adicionada verificação de NoneType da OpenAI)
+# CÓDIGO ATUALIZADO (ROBUSTO) PARA: app/services/llm_service.py
+# (Implementa o padrão Meta-Roteador + Extrator de Argumentos)
 
 import os
 import json
@@ -13,152 +13,315 @@ class LLMService:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
             raise ValueError("Chave da API OpenAI não fornecida")
-        self.model = model
+        
+        # Usamos o modelo mais rápido e barato para roteamento
+        self.routing_model = "gpt-4o-mini"
+        # Usamos o modelo principal para geração de relatórios
+        self.generation_model = model 
+        
         self.client = OpenAI(api_key=self.api_key)
         self.token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-        # (Definições de ferramentas omitidas por brevidade)
-        self.intent_tools = [
-            {"type": "function", "function": {"name": "call_ingest_tool", "description": "Usado para ingerir um repositório...", "parameters": ...}},
-            {"type": "function", "function": {"name": "call_query_tool", "description": "Usado para perguntas sobre um repositório...", "parameters": ...}},
-            {"type": "function", "function": {"name": "call_report_tool", "description": "Usado para pedir um 'relatório' ou 'gráfico'...", "parameters": ...}},
-            {"type": "function", "function": {"name": "call_schedule_tool", "description": "Usado para agendar um relatório...", "parameters": ...}},
-            {"type": "function", "function": {"name": "call_save_instruction_tool", "description": "Usado para salvar uma instrução...", "parameters": ...}},
-        ]
-        # (Definições de ferramentas colapsadas - o código é o mesmo do Marco 7)
-        self.intent_tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "call_ingest_tool",
-                    "description": "Usado quando o usuário quer ingerir, re-ingerir ou indexar um repositório. Extrai 'usuario/repo' de URLs completas.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"repositorio": {"type": "string", "description": "O nome do repositório no formato 'usuario/nome'."}},
-                        "required": ["repositorio"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "call_query_tool",
-                    "description": "Usado para perguntas sobre um repositório. Ex: 'quem fez mais commits no usuario/repo' OU 'me fale sobre https://github.com/usuario/repo'.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "repositorio": {"type": "string", "description": "O nome do repositório no formato 'usuario/nome'."},
-                            "prompt_usuario": {"type": "string", "description": "A pergunta específica do usuário."}
-                        },
-                        "required": ["repositorio", "prompt_usuario"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "call_report_tool",
-                    "description": "Usado para pedir um 'relatório' ou 'gráfico' para download *imediato*.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "repositorio": {"type": "string", "description": "O nome do repositório no formato 'usuario/nome'."},
-                            "prompt_usuario": {"type": "string", "description": "A instrução para o relatório (ex: 'gere um gráfico de pizza dos commits')."}
-                        },
-                        "required": ["repositorio", "prompt_usuario"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "call_schedule_tool",
-                    "description": "Usado quando o usuário quer agendar um relatório para o futuro (ex: 'todo dia', 'semanalmente', 'às 17h').",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "repositorio": {"type": "string", "description": "O nome do repositório no formato 'usuario/nome'."},
-                            "prompt_relatorio": {"type": "string", "description": "O que o relatório deve conter (ex: 'análise de commits da equipe')."},
-                            "frequencia": {"type": "string", "enum": ["daily", "weekly", "monthly"], "description": "A frequência."},
-                            "hora": {"type": "string", "description": "A hora no formato HH:MM (24h)."},
-                            "timezone": {"type": "string", "description": "O fuso horário (ex: 'America/Sao_Paulo')."}
-                        },
-                        "required": ["repositorio", "prompt_relatorio", "frequencia", "hora", "timezone"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "call_save_instruction_tool",
-                    "description": "Usado para salvar uma instrução para futuros relatórios. Extrai 'usuario/repo' de URLs completas.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "repositorio": {"type": "string", "description": "O repositório ao qual esta instrução se aplica."},
-                            "instrucao": {"type": "string", "description": "A instrução específica que o usuário quer salvar."}
-                        },
-                        "required": ["repositorio", "instrucao"],
-                    },
-                },
-            },
-        ]
 
-    def get_intent(self, user_query: str) -> Dict[str, Any]:
-        # (Sem alterações)
-        if not self.client: raise Exception("LLMService não inicializado.")
-        print(f"[LLMService] Classificando intenção para: '{user_query}'")
+        # --- ARQUITETURA DE FERRAMENTAS ROBUSTA ---
+        # 1. Definições de ferramentas individuais
+        # (Isso nos permite chamar apenas a ferramenta que queremos na Etapa 2)
+
+        self.tool_ingest = {
+            "type": "function",
+            "function": {
+                "name": "call_ingest_tool",
+                "description": "Usado quando o usuário quer ingerir, re-ingerir ou indexar um repositório.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"repositorio": {"type": "string", "description": "O nome do repositório no formato 'usuario/nome'."}},
+                    "required": ["repositorio"],
+                },
+            },
+        }
+        
+        self.tool_query = {
+            "type": "function",
+            "function": {
+                "name": "call_query_tool",
+                "description": "Usado para perguntas sobre um repositório (RAG).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "repositorio": {"type": "string", "description": "O nome do repositório no formato 'usuario/nome'."},
+                        "prompt_usuario": {"type": "string", "description": "A pergunta específica do usuário."}
+                    },
+                    "required": ["repositorio", "prompt_usuario"],
+                },
+            },
+        }
+
+        self.tool_report = {
+            "type": "function",
+            "function": {
+                "name": "call_report_tool",
+                "description": "Usado para pedir um 'relatório' ou 'gráfico' para DOWNLOAD (salvar o arquivo no computador). NÃO usado para email.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "repositorio": {"type": "string", "description": "O nome do repositório no formato 'usuario/nome'."},
+                        "prompt_usuario": {"type": "string", "description": "A instrução para o relatório."}
+                    },
+                    "required": ["repositorio", "prompt_usuario"],
+                },
+            },
+        }
+
+        self.tool_schedule = {
+            "type": "function",
+            "function": {
+                "name": "call_schedule_tool",
+                "description": "Usado quando o usuário quer ENVIAR um relatório por EMAIL. Pode ser para agora (frequencia: 'once') ou agendado (ex: 'daily', 'weekly').",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "repositorio": {"type": "string", "description": "O nome do repositório no formato 'usuario/nome'."},
+                        "prompt_relatorio": {"type": "string", "description": "O que o relatório deve conter."},
+                        "frequencia": {"type": "string", "enum": ["once", "daily", "weekly", "monthly"], "description": "A frequência. Use 'once' para envio imediato."},
+                        "hora": {"type": "string", "description": "A hora no formato HH:MM (24h)."},
+                        "timezone": {"type": "string", "description": "O fuso horário (ex: 'America/Sao_Paulo')."}
+                    },
+                    "required": ["repositorio", "prompt_relatorio", "frequencia", "hora", "timezone"],
+                },
+            },
+        }
+        
+        self.tool_save_instruction = {
+            "type": "function",
+            "function": {
+                "name": "call_save_instruction_tool",
+                "description": "Usado para salvar uma instrução para futuros relatórios.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "repositorio": {"type": "string", "description": "O repositório ao qual esta instrução se aplica."},
+                        "instrucao": {"type": "string", "description": "A instrução específica que o usuário quer salvar."}
+                    },
+                    "required": ["repositorio", "instrucao"],
+                },
+            },
+        }
+
+        # 2. Mapeamento de Meta-Intenção para a definição da ferramenta
+        # (Este é o "cérebro" da nova arquitetura)
+        self.tool_map = {
+            "INGEST": self.tool_ingest,
+            "QUERY": self.tool_query,
+            "REPORT": self.tool_report,
+            "SCHEDULE": self.tool_schedule,
+            "SAVE_INSTRUCTION": self.tool_save_instruction
+        }
+
+    
+    def _get_meta_intent(self, user_query: str) -> Dict[str, Any]:
+        """
+        Etapa 1: O Meta-Roteador.
+        Decide a intenção principal (o que o usuário quer).
+        """
+        print(f"[LLMService] Etapa 1: Classificando Meta-Intenção para: '{user_query}'")
+        
+        # Lista simples de intenções que o Meta-Roteador pode escolher
+        intent_categories = list(self.tool_map.keys()) # ["INGEST", "QUERY", ...]
+        
         system_prompt = f"""
-Você é um roteador de API. Sua tarefa é analisar o prompt do usuário e chamar a ferramenta correta.
-REGRAS IMPORTANTES:
-1.  **Extração de Repositório:** Se o usuário fornecer uma URL completa do GitHub (ex: `https://github.com/usuario/repo`), você DEVE extrair apenas o nome `usuario/repo` para o parâmetro 'repositorio'.
-2.  **Fuso Horário:** ... (fuso de Brasília) ...
-3.  **Data Atual:** ...
+Você é um roteador de API. Sua tarefa é classificar o prompt do usuário em UMA das seguintes categorias:
+{json.dumps(intent_categories)}
+
+- INGEST: Ingerir, indexar ou atualizar um repositório.
+- QUERY: Fazer uma pergunta sobre o código ou dados de um repositório (RAG).
+- REPORT: Gerar um relatório para DOWNLOAD IMEDIATO.
+- SCHEDULE: Enviar um relatório por EMAIL (agora ou no futuro).
+- SAVE_INSTRUCTION: Salvar uma preferência ou instrução para o futuro.
+- CLARIFY: Se a intenção for vaga, ambígua ou não relacionada a nenhuma das anteriores.
+
+Responda APENAS com um objeto JSON no formato: {{"intent": "NOME_DA_INTENCAO"}}
 """
         try:
             response = self.client.chat.completions.create(
-                model=self.model,
+                model=self.routing_model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_query}
                 ],
-                tools=self.intent_tools,
-                tool_choice="auto"
+                response_format={"type": "json_object"},
+                temperature=0.0
             )
-            response_message = response.choices[0].message
-            tool_calls = response_message.tool_calls
-            if not tool_calls:
-                return {"intent": "CLARIFY", "response_text": response_message.content}
-            tool_call = tool_calls[0]
-            function_name = tool_call.function.name
-            function_args = json.loads(tool_call.function.arguments)
-            return {"intent": function_name, "args": function_args}
+            
+            result_json = json.loads(response.choices[0].message.content)
+            intent = result_json.get("intent")
+            print(f"[LLMService] Etapa 1: Meta-Intenção decidida: {intent}")
+            
+            if intent in self.tool_map:
+                return {"status": "success", "intent": intent}
+            else:
+                return {"status": "clarify", "response_text": "Desculpe, não entendi sua solicitação. Você pode tentar reformular?"}
+
         except Exception as e:
-            print(f"[LLMService] Erro CRÍTICO ao classificar intenção: {e}")
-            raise Exception(f"Erro ao processar sua solicitação na LLM: {e}")
+            print(f"[LLMService] Erro CRÍTICO na Etapa 1 (Meta-Roteador): {e}")
+            return {"status": "clarify", "response_text": f"Erro interno no roteador: {e}"}
+
+    def _get_arguments_for_intent(self, user_query: str, intent_name: str) -> Dict[str, Any]:
+        """
+        Etapa 2: O Extrator de Argumentos.
+        Força a extração de argumentos para a intenção já decidida.
+        """
+        print(f"[LLMService] Etapa 2: Extraindo argumentos para: {intent_name}")
+        
+        tool_definition = self.tool_map.get(intent_name)
+        if not tool_definition:
+            raise ValueError(f"Intenção '{intent_name}' não tem uma ferramenta definida no tool_map.")
+
+        # Extrai o nome da ferramenta (ex: "call_schedule_tool")
+        tool_name = tool_definition["function"]["name"] 
+        
+        system_prompt = f"""
+Você é um extrator de argumentos JSON. O usuário quer executar a ação '{intent_name}'.
+Sua tarefa é extrair os parâmetros necessários para a ferramenta '{tool_name}' a partir do prompt do usuário.
+Use 'America/Sao_Paulo' como fuso horário padrão se o usuário mencionar 'Brasília' ou 'horário de São Paulo'.
+Se o usuário disser "agora" ou "imediatamente" para um agendamento, use 'frequencia: "once"' e a hora atual.
+"""
+        try:
+            response = self.client.chat.completions.create(
+                model=self.routing_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_query}
+                ],
+                tools=[tool_definition], # Passa APENAS a ferramenta que queremos
+                tool_choice={"type": "function", "function": {"name": tool_name}} # FORÇA o uso dessa ferramenta
+            )
+            
+            tool_calls = response.choices[0].message.tool_calls
+            if not tool_calls:
+                # Isso não deve acontecer devido ao 'tool_choice' forçado, mas é uma boa guarda
+                print(f"[LLMService] ERRO na Etapa 2: {tool_name} não foi chamada, mesmo sendo forçada.")
+                raise Exception("Falha ao extrair argumentos.")
+
+            call = tool_calls[0]
+            function_args = json.loads(call.function.arguments)
+            
+            print(f"[LLMService] Etapa 2: Argumentos extraídos: {function_args}")
+            
+            return {
+                "status": "success",
+                "intent_tool_name": tool_name, # ex: "call_schedule_tool"
+                "args": function_args
+            }
+
+        except Exception as e:
+            print(f"[LLMService] Erro CRÍTICO na Etapa 2 (Extrator de Argumentos): {e}")
+            # Se a extração falhar, pedimos clarificação
+            return {
+                "status": "clarify",
+                "response_text": f"Eu entendi que você quer {intent_name}, mas não consegui extrair os detalhes. Pode, por favor, fornecer o repositório e outros dados?"
+            }
+
+    # --- FUNÇÃO PÚBLICA PRINCIPAL ---
     
+    def get_intent(self, user_query: str) -> Dict[str, Any]:
+        """
+        Orquestra a cadeia de roteamento robusto em duas etapas.
+        """
+        if not self.client: raise Exception("LLMService não inicializado.")
+
+        # Etapa 1: Decidir a intenção
+        meta_intent_result = self._get_meta_intent(user_query)
+        
+        if meta_intent_result["status"] == "clarify":
+            return {"intent": "CLARIFY", "response_text": meta_intent_result["response_text"]}
+
+        intent_name = meta_intent_result["intent"] # ex: "SCHEDULE"
+
+        # Etapa 2: Extrair os argumentos
+        args_result = self._get_arguments_for_intent(user_query, intent_name)
+        
+        if args_result["status"] == "clarify":
+            return {"intent": "CLARIFY", "response_text": args_result["response_text"]}
+
+        # Sucesso!
+        return {
+            "intent": args_result["intent_tool_name"], # ex: "call_schedule_tool"
+            "args": args_result["args"]
+        }
+    
+    #
+    # --- (O RESTANTE DAS FUNÇÕES: generate_response_stream, generate_analytics_report, etc. permanecem as mesmas) ---
+    #
+    
+    # BLOCO CORRIGIDO em app/services/llm_service.py
+
     def generate_response(self, query: str, context: List[Dict[str, Any]]) -> Dict[str, Any]:
-        # (Sem alterações)
+        """
+        Gera uma resposta RAG padrão (não-streaming).
+        """
+        if not self.client: raise Exception("LLMService não inicializado.")
+        print("[LLMService] Iniciando resposta RAG (NÃO-Streaming)...")
+        
         formatted_context = self._format_context(context)
-        system_prompt = "..."
-        user_prompt = f"Contexto:\n{formatted_context}\n\nConsulta: \"{query}\"\n..."
-        response = self.client.chat.completions.create(...)
-        usage = response.usage
-        self.token_usage["prompt_tokens"] += usage.prompt_tokens
-        # ...
-        return {"response": response.choices[0].message.content, "usage": ...}
+        
+        system_prompt = """
+Você é um assistente de IA especialista em análise de repositórios GitHub.
+Sua tarefa é responder à consulta do usuário com base estritamente no contexto fornecido (documentos de commits, issues e PRs).
+Seja conciso e direto.
+Se o contexto não for suficiente, informe que não encontrou informações sobre aquele tópico específico.
+"""
+        user_prompt = f"Contexto:\n{formatted_context}\n\nConsulta: \"{query}\"\n\nBaseado APENAS no contexto acima, responda à consulta."
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.generation_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1
+            )
+            
+            usage = response.usage
+            if usage:
+                self.token_usage["prompt_tokens"] += usage.prompt_tokens
+                self.token_usage["completion_tokens"] += usage.completion_tokens
+                self.token_usage["total_tokens"] += usage.total_tokens
+
+            response_text = response.choices[0].message.content
+            return {"response": response_text, "usage": usage}
+
+        except Exception as e:
+            print(f"[LLMService] Erro durante o generate_response: {e}")
+            return {"response": f"Erro ao gerar resposta: {e}", "usage": None}
+    
+    # BLOCO CORRIGIDO em app/services/llm_service.py
 
     def generate_response_stream(self, query: str, context: List[Dict[str, Any]]) -> Iterator[str]:
-        # (Sem alterações)
+        """
+        Gera uma resposta RAG em streaming.
+        """
         if not self.client: raise Exception("LLMService não inicializado.")
         print("[LLMService] Iniciando resposta em STREAMING...")
+        
         formatted_context = self._format_context(context)
-        system_prompt = "..."
-        user_prompt = f"Contexto:\n{formatted_context}\n\nConsulta: \"{query}\"\n..."
+        
+        system_prompt = """
+Você é um assistente de IA especialista em análise de repositórios GitHub.
+Sua tarefa é responder à consulta do usuário com base estritamente no contexto fornecido (documentos de commits, issues e PRs).
+Seja conciso e direto.
+Se o contexto não for suficiente, informe que não encontrou informações sobre aquele tópico específico.
+"""
+        user_prompt = f"Contexto:\n{formatted_context}\n\nConsulta: \"{query}\"\n\nBaseado APENAS no contexto acima, responda à consulta."
+
         try:
             stream = self.client.chat.completions.create(
-                model=self.model,
-                messages=[...],
-                stream=True
+                model=self.generation_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                stream=True,
+                temperature=0.1
             )
             for chunk in stream:
                 content = chunk.choices[0].delta.content
@@ -188,7 +351,7 @@ Gere a resposta em um único objeto JSON...
 """
         try:
             response = self.client.chat.completions.create(
-                model=self.model,
+                model=self.generation_model, # Usa o modelo mais forte
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": final_user_prompt}
@@ -197,26 +360,21 @@ Gere a resposta em um único objeto JSON...
                 temperature=0.3, max_tokens=4000
             )
             
-            # --- INÍCIO DA CORREÇÃO (Robustez) ---
             response_content = response.choices[0].message.content
             
             if not response_content:
-                # Se a OpenAI retornar None (ex: filtro de conteúdo),
-                # nós criamos um JSON de erro.
                 print("[LLMService] ERRO: OpenAI retornou None (provável filtro de conteúdo).")
                 return json.dumps({
                     "analysis_markdown": "# Erro de Geração\n\nA IA não conseguiu gerar uma resposta. Isso pode ter sido causado por filtros de conteúdo ou uma falha na API.",
                     "chart_json": None
                 })
             
-            # Atualiza os tokens
             usage = response.usage
             self.token_usage["prompt_tokens"] += usage.prompt_tokens
             self.token_usage["completion_tokens"] += usage.completion_tokens
             self.token_usage["total_tokens"] += usage.total_tokens
             
             return response_content # Retorna a string JSON
-            # --- FIM DA CORREÇÃO ---
 
         except Exception as e:
             print(f"[LLMService] Erro ao gerar relatório JSON: {e}")
