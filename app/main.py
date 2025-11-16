@@ -1,5 +1,4 @@
 # CÓDIGO CORRIGIDO E COMPLETO PARA: app/main.py
-# (Restaura /api/chat e remove duplicatas)
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -69,16 +68,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Modelos Pydantic (CORRIGIDOS) ---
-# (Removida a duplicação de ChatRequest)
-
+# --- Modelos Pydantic ---
 class Message(BaseModel):
-    # O frontend envia 'id', mas não precisamos dele no backend
     sender: str
     text: str
 
 class ChatRequest(BaseModel):
-    # Esta é a definição correta para "Memória de Chat"
     messages: List[Message]
     user_email: Optional[str] = None 
 
@@ -124,7 +119,7 @@ async def _route_intent(
     intent: str, 
     args: Dict[str, Any], 
     user_email: Optional[str] = None,
-    last_user_prompt: str = ""
+    last_user_prompt: str = "" # O que o usuário acabou de digitar
 ) -> Dict[str, Any]:
     
     if not conn or not q_ingest or not q_reports:
@@ -159,25 +154,20 @@ async def _route_intent(
     elif intent == "call_schedule_tool":
         print(f"[ChatRouter] Rota: SCHEDULE. Args: {args}")
         
-        # --- INÍCIO DA ATUALIZAÇÃO (Lógica de Email) ---
-        
         # 1. Extrai todos os argumentos
         repo = args.get("repositorio")
         prompt = args.get("prompt_relatorio")
         freq = args.get("frequencia")
         hora = args.get("hora")
         tz = args.get("timezone")
-        email_from_args = args.get("user_email") # <-- Pega o email extraído pelo LLM
+        email_from_args = args.get("user_email")
         
-        # 2. Define o email final: usa o extraído do prompt, ou (como fallback) o enviado pelo frontend
+        # 2. Define o email final
         final_email = email_from_args or user_email 
         
         # 3. Verifica se TEMOS um email
         if not final_email: 
-            # Se não, pede
             return {"response_type": "clarification", "message": "Para agendar relatórios, preciso do seu email.", "job_id": None}
-
-        # --- INÍCIO DA ATUALIZAÇÃO (Lógica "Once" vs "Agendado") ---
 
         # 4. LÓGICA DE ENVIO IMEDIATO (freq == "once")
         if freq == "once":
@@ -224,8 +214,6 @@ async def _route_intent(
                     args=confirmation_args
                 )
                 return {"response_type": "clarification", "message": confirmation_text, "job_id": None}
-        
-        # --- FIM DA ATUALIZAÇÃO ---
     
     # CASO 5: Salvar Instrução (SAVE_INSTRUCTION)
     elif intent == "call_save_instruction_tool":
@@ -233,6 +221,16 @@ async def _route_intent(
         job = q_ingest.enqueue(save_instruction, repo, instrucao, job_timeout=300)
         return {"response_type": "job_enqueued", "message": "Ok, estou salvando sua instrução...", "job_id": job.id}
     
+    # CASO (NOVO): Bate-papo (CHAT)
+    elif intent == "call_chat_tool":
+        print("[ChatRouter] Rota: CHAT.")
+        if not llm_service:
+            return {"response_type": "answer", "message": "👍", "job_id": None}
+            
+        # Pede ao LLM uma resposta casual
+        chat_response = llm_service.generate_simple_response(last_user_prompt)
+        return {"response_type": "answer", "message": chat_response, "job_id": None}
+        
     # CASO 6: Clarificação (CLARIFY)
     elif intent == "CLARIFY":
         return {"response_type": "clarification", "message": args.get('response_text', "Não entendi."), "job_id": None}
@@ -250,7 +248,6 @@ async def health_check():
     return {"status": "online", "version": "0.4.0", "redis_status": redis_status}
 
 
-# --- INÍCIO DA CORREÇÃO (ENDPOINT RESTAURADO) ---
 @app.post("/api/chat", response_model=ChatResponse, dependencies=[Depends(verificar_token)])
 async def handle_chat(request: ChatRequest):
     if not llm_service or not conn: raise HTTPException(status_code=500, detail="Serviços de backend não inicializados.")
@@ -284,14 +281,12 @@ async def handle_chat(request: ChatRequest):
     except Exception as e:
         print(f"[ChatRouter] Erro CRÍTICO no /api/chat: {e}")
         return {"response_type": "error", "message": f"Erro: {e}", "job_id": None}
-# --- FIM DA CORREÇÃO ---
 
 
-# --- INÍCIO DA CORREÇÃO (ENDPOINT ÚNICO E CORRIGIDO) ---
 @app.post("/api/chat_file", response_model=ChatResponse, dependencies=[Depends(verificar_token)])
 async def handle_chat_with_file(
     prompt: str = Form(...), 
-    messages_json: str = Form(...), # <-- NOVO
+    messages_json: str = Form(...),
     user_email: Optional[str] = Form(None), 
     arquivo: UploadFile = File(...)
 ):
@@ -308,8 +303,6 @@ async def handle_chat_with_file(
             history_text = ""
         
         # 2. Cria o prompt combinado
-        # O 'prompt' é a mensagem atual do usuário
-        # O 'history_text' são as mensagens anteriores
         combined_prompt = f"{history_text}\nUser: {prompt}\n\nArquivo ({arquivo.filename}):\n\"{file_text}\""
 
         intent_data = llm_service.get_intent(combined_prompt) # Envia o histórico completo
@@ -329,7 +322,6 @@ async def handle_chat_with_file(
     except Exception as e:
         print(f"[ChatRouter-File] Erro CRÍTICO no /api/chat_file: {e}")
         return {"response_type": "error", "message": f"Erro: {e}", "job_id": None}
-# --- FIM DA CORREÇÃO (REMOVIDA A DUPLICATA) ---
 
 
 # --- NOVO ENDPOINT (Marco 8 - Streaming) ---

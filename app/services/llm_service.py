@@ -1,5 +1,4 @@
 # CÓDIGO COMPLETO E CORRIGIDO PARA: app/services/llm_service.py
-# (Implementa o Roteador de 2 Etapas e corrige todos os placeholders '...')
 
 import os
 import json
@@ -79,12 +78,9 @@ class LLMService:
                         "frequencia": {"type": "string", "enum": ["once", "daily", "weekly", "monthly"], "description": "A frequência. Use 'once' para envio imediato."},
                         "hora": {"type": "string", "description": "A hora no formato HH:MM (24h)."},
                         "timezone": {"type": "string", "description": "O fuso horário (ex: 'America/Sao_Paulo')."},
-                        
-                        # --- INÍCIO DA ATUALIZAÇÃO ---
                         "user_email": {"type": "string", "description": "O email do destinatário (ex: usuario@gmail.com)."}
-                        # --- FIM DA ATUALIZAÇÃO ---
                     },
-                    # O e-mail NÃO é obrigatório aqui; a lógica em main.py tratará disso
+                    # O e-mail não é obrigatório aqui; a lógica em main.py tratará disso
                     "required": ["repositorio", "prompt_relatorio", "frequencia", "hora", "timezone"], 
                 },
             },
@@ -106,12 +102,28 @@ class LLMService:
             },
         }
 
+        self.tool_chat = {
+            "type": "function",
+            "function": {
+                "name": "call_chat_tool",
+                "description": "Usado para bate-papo casual, saudações ou respostas curtas.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string", "description": "O texto do usuário."}
+                    },
+                    "required": ["prompt"],
+                },
+            },
+        }
+
         self.tool_map = {
             "INGEST": self.tool_ingest,
             "QUERY": self.tool_query,
             "REPORT": self.tool_report,
             "SCHEDULE": self.tool_schedule,
-            "SAVE_INSTRUCTION": self.tool_save_instruction
+            "SAVE_INSTRUCTION": self.tool_save_instruction,
+            "CHAT": self.tool_chat # <-- Adiciona CHAT ao mapa
         }
 
     
@@ -131,6 +143,7 @@ Você é um roteador de API. Sua tarefa é classificar o prompt do usuário em U
 - REPORT: Gerar um relatório para DOWNLOAD IMEDIATO.
 - SCHEDULE: Enviar um relatório por EMAIL (agora ou no futuro).
 - SAVE_INSTRUCTION: Salvar uma preferência ou instrução para o futuro.
+- CHAT: Bate-papo casual, saudações, ou respostas curtas como 'ok', 'obrigado', 'correto'.
 - CLARIFY: Se a intenção for vaga, ambígua ou não relacionada a nenhuma das anteriores.
 
 Responda APENAS com um objeto JSON no formato: {{"intent": "NOME_DA_INTENCAO"}}
@@ -225,6 +238,13 @@ Se o usuário disser "agora" ou "imediatamente" para um agendamento, use 'freque
             return {"intent": "CLARIFY", "response_text": meta_intent_result["response_text"]}
 
         intent_name = meta_intent_result["intent"] # ex: "SCHEDULE"
+
+        # Se for CHAT, não precisamos extrair argumentos complexos
+        if intent_name == "CHAT":
+            return {
+                "intent": "call_chat_tool",
+                "args": {"prompt": user_query.split('\n')[-1]} # Envia só a última linha
+            }
 
         # Etapa 2: Extrair os argumentos
         args_result = self._get_arguments_for_intent(user_query, intent_name)
@@ -331,7 +351,7 @@ Contexto do Repositório: {repo_name}
 Prompt do Usuário: "{user_prompt}"
 Dados Brutos (JSON): {context_json_string}
 ---
-Gere a resposta em um único objeto JSON...
+Gere o relatório em um único objeto JSON...
 """
         try:
             response = self.client.chat.completions.create(
@@ -366,6 +386,34 @@ Gere a resposta em um único objeto JSON...
                 "analysis_markdown": f"# Erro\n\nNão foi possível gerar a análise: {e}",
                 "chart_json": None
             })
+
+    
+    def generate_simple_response(self, prompt: str) -> str:
+        """
+        Gera uma resposta curta e casual.
+        """
+        print(f"[LLMService] Gerando resposta simples para: '{prompt}'")
+        
+        system_prompt = """
+Você é um assistente de IA. Responda ao usuário de forma curta, casual e prestativa.
+Se o usuário apenas disser 'ok', 'certo' ou 'correto', responda com '👍' ou 'Entendido.'.
+Se o usuário disser 'obrigado', responda com 'De nada!' ou 'Estou aqui para ajudar!'.
+"""
+        try:
+            response = self.client.chat.completions.create(
+                model=self.routing_model, # Usa o modelo rápido
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=50
+            )
+            return response.choices[0].message.content
+        
+        except Exception as e:
+            print(f"[LLMService] Erro ao gerar resposta simples: {e}")
+            return "👍" # Fallback
 
     
     def get_token_usage(self) -> Dict[str, int]:
@@ -445,5 +493,5 @@ com frequência diária, às 10:00. Isso está correto?
         
         except Exception as e:
             print(f"[LLMService] Erro ao gerar sumário: {e}")
-            # Fallback (e remoção da aspa dupla extra que causei antes)
+            # Fallback
             return f"Ok, devo executar a ação '{intent_name}' com os argumentos: {json.dumps(args)}. Isso está correto?"
