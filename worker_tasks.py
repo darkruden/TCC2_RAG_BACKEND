@@ -1,5 +1,5 @@
 # CÓDIGO COMPLETO PARA: worker_tasks.py
-# (Contém TODAS as funções que o RQ pode enfileirar)
+# (Corrigido para 'raise' exceções em vez de 'return' strings de erro)
 
 # --- Importações de Serviços (Classes) ---
 from app.services.metadata_service import MetadataService
@@ -7,7 +7,7 @@ from app.services.llm_service import LLMService
 from app.services.report_service import ReportService, SupabaseStorageService
 from app.services.ingest_service import IngestService, GithubService
 from app.services.email_service import send_report_email
-from app.services.embedding_service import get_embedding # Para salvar instrução
+from app.services.embedding_service import get_embedding
 
 from supabase import create_client
 import os
@@ -22,16 +22,13 @@ from typing import List, Dict, Any
 def ingest_repo(repo_name: str, issues_limit: int, prs_limit: int, commits_limit: int) -> Dict[str, Any]:
     """
     Tarefa do Worker (RQ) para ingestão (Delta Pull).
-    (Movida do ingest_service.py)
     """
     print(f"[WorkerTask] INICIANDO INGESTÃO para {repo_name}...")
     try:
-        # 1. Instancia os serviços DENTRO do worker
         metadata_service = MetadataService()
         github_service = GithubService()
-        ingest_service = IngestService() # (Usado apenas para o helper de formatação)
+        ingest_service = IngestService()
         
-        # 2. Verifica se é ingestão completa ou incremental
         latest_timestamp = metadata_service.get_latest_timestamp(repo_name)
         
         if latest_timestamp is None:
@@ -46,7 +43,6 @@ def ingest_repo(repo_name: str, issues_limit: int, prs_limit: int, commits_limit
                 repo_name, issues_limit, prs_limit, commits_limit, since=latest_timestamp
             )
 
-        # 3. Formata os dados
         documentos_para_salvar = ingest_service.format_data_for_ingestion(repo_name, raw_data)
         
         if not documentos_para_salvar:
@@ -54,7 +50,6 @@ def ingest_repo(repo_name: str, issues_limit: int, prs_limit: int, commits_limit
             print(f"[WorkerTask] {mensagem_vazia}")
             return {"status": "concluído", "mensagem": mensagem_vazia}
             
-        # 4. Salva os novos documentos
         metadata_service.save_documents_batch(documentos_para_salvar)
         
         mensagem_final = f"Ingestão de {repo_name} concluída. {len(documentos_para_salvar)} novos documentos salvos."
@@ -63,18 +58,17 @@ def ingest_repo(repo_name: str, issues_limit: int, prs_limit: int, commits_limit
         
     except Exception as e:
         print(f"[WorkerTask] ERRO na ingestão de {repo_name}: {e}")
-        raise # Propaga o erro para o RQ
+        # --- CORREÇÃO (Bug 1) ---
+        # Propaga o erro para o RQ
+        raise e
 
 def save_instruction(repo_name: str, instruction_text: str) -> str:
     """
     Tarefa do Worker (RQ) para salvar uma instrução de relatório.
-    (Movida do ingest_service.py)
     """
     print(f"[WorkerTask] Salvando instrução para: {repo_name}")
     try:
-        # Instancia os serviços DENTRO do worker
         metadata_service = MetadataService()
-        
         print("[WorkerTask] Gerando embedding para a instrução...")
         instruction_embedding = get_embedding(instruction_text)
         
@@ -84,7 +78,6 @@ def save_instruction(repo_name: str, instruction_text: str) -> str:
             "embedding": instruction_embedding
         }
         
-        # Chama o cliente supabase de dentro do metadata_service
         response = metadata_service.supabase.table("instrucoes_relatorio").insert(new_instruction).execute()
         
         if response.data:
@@ -95,7 +88,8 @@ def save_instruction(repo_name: str, instruction_text: str) -> str:
 
     except Exception as e:
         print(f"[WorkerTask] ERRO ao salvar instrução: {e}")
-        raise Exception(f"Falha ao salvar instrução: {e}")
+        # --- CORREÇÃO (Bug 1) ---
+        raise e
 
 
 # -------------------------------------------------------------------
@@ -105,16 +99,15 @@ def save_instruction(repo_name: str, instruction_text: str) -> str:
 def processar_e_salvar_relatorio(repo_name: str, user_prompt: str, format: str = "html"):
     """
     Tarefa do Worker (RQ) que gera um relatório para DOWNLOAD.
-    (Movida do report_service.py)
     """
     SUPABASE_BUCKET_NAME = "reports" 
     print(f"[WorkerTask] Iniciando relatório (com RAG) para: {repo_name}")
     try:
-        # 1. Instancia os serviços DENTRO do worker
+        # 1. Instancia os serviços
         metadata_service = MetadataService()
         llm_service = LLMService()
-        report_service = ReportService() # (Usada para os helpers de HTML/Chart.js)
-        storage_service = SupabaseStorageService() # (Usada para o upload)
+        report_service = ReportService()
+        storage_service = SupabaseStorageService()
         
         # 2. Busca uma instrução salva (RAG)
         retrieved_instruction = metadata_service.find_similar_instruction(repo_name, user_prompt)
@@ -163,9 +156,11 @@ def processar_e_salvar_relatorio(repo_name: str, user_prompt: str, format: str =
         return filename
         
     except Exception as e:
-        error_message = repr(e)
-        print(f"[WorkerTask] Erro detalhado durante geração de relatório: {error_message}")
-        return f"Erro during a geração do relatório: {error_message}"
+        error_message = repr(e) # Pega a mensagem de erro (ex: TypeError)
+        print(f"[WorkerTask] Erro detalhado during geração do relatório: {error_message}")
+        # --- CORREÇÃO (Bug 1) ---
+        # Relança a exceção para o RQ marcar como 'failed'
+        raise e
 
 # -------------------------------------------------------------------
 # TAREFA (do Marco 5): Relatório Agendado por Email
@@ -178,30 +173,30 @@ def enviar_relatorio_agendado(agendamento_id: str, user_email: str, repo_name: s
     print(f"[WorkerTask] Iniciando relatório agendado {agendamento_id} para {user_email}")
     
     try:
-        # 1. Instancia os serviços DENTRO do worker
+        # 1. Instancia os serviços
         llm_service = LLMService()
         report_service = ReportService()
         metadata_service = MetadataService()
         
         print(f"[WorkerTask] Buscando dados de {repo_name}...")
         
-        # 2. Busca os dados para a análise
+        # 2. Busca os dados
         dados_brutos = metadata_service.get_all_documents_by_repo(repo_name)
         if not dados_brutos:
             print(f"[WorkerTask] Nenhum dado encontrado para {repo_name}.")
             
         print(f"[WorkerTask] Gerando JSON da LLM...")
         
-        # 3. Gera o JSON da LLM (Não usa RAG de instrução, usa o prompt salvo)
+        # 3. Gera o JSON
         report_json_string = llm_service.generate_analytics_report(
             repo_name=repo_name,
-            user_prompt=user_prompt, # Usa o prompt salvo no agendamento
+            user_prompt=user_prompt,
             raw_data=dados_brutos
         )
         
         print(f"[WorkerTask] Gerando HTML do relatório...")
         
-        # 4. Gera o CONTEÚDO HTML
+        # 4. Gera o HTML
         (html_content, _, _) = report_service.generate_report_content(
             repo_name,
             report_json_string,
@@ -212,7 +207,7 @@ def enviar_relatorio_agendado(agendamento_id: str, user_email: str, repo_name: s
         subject = f"Seu Relatório Agendado: {repo_name}"
         send_report_email(user_email, subject, html_content)
         
-        # 6. Atualiza o 'ultimo_envio' no Supabase
+        # 6. Atualiza o 'ultimo_envio'
         url: str = os.getenv("SUPABASE_URL")
         key: str = os.getenv("SUPABASE_KEY")
         supabase: Client = create_client(url, key)
@@ -225,14 +220,15 @@ def enviar_relatorio_agendado(agendamento_id: str, user_email: str, repo_name: s
 
     except Exception as e:
         print(f"[WorkerTask] ERRO CRÍTICO no job {agendamento_id}: {e}")
-        raise
+        # --- CORREÇÃO (Bug 1) ---
+        raise e
 
 # -------------------------------------------------------------------
 # TAREFA (do Marco 6): Ingestão por Webhook
 # -------------------------------------------------------------------
 
+# (Funções helper _parse_issue_payload e _parse_push_payload não mudam)
 def _parse_issue_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-    # (Função helper, sem alterações)
     action = payload.get("action");
     if action not in ["opened", "edited"]: return []
     issue = payload.get("issue", {}); repo_name = payload.get("repository", {}).get("full_name")
@@ -246,7 +242,6 @@ def _parse_issue_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     }]
 
 def _parse_push_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-    # (Função helper, sem alterações)
     repo_name = payload.get("repository", {}).get("full_name"); commits = payload.get("commits", [])
     if not commits or not repo_name: return []
     documentos_para_salvar = []
@@ -267,7 +262,6 @@ def process_webhook_payload(event_type: str, payload: Dict[str, Any]):
     """
     print(f"[WebhookWorker] Processando evento: {event_type}")
     try:
-        # Instancia o MetadataService DENTRO do worker
         metadata_service = MetadataService()
         
         documentos_para_salvar = []
@@ -286,4 +280,5 @@ def process_webhook_payload(event_type: str, payload: Dict[str, Any]):
 
     except Exception as e:
         print(f"[WebhookWorker] ERRO CRÍTICO ao processar webhook {event_type}: {e}")
-        raise
+        # --- CORREÇÃO (Bug 1) ---
+        raise e
