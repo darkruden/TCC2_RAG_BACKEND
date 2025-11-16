@@ -126,15 +126,24 @@ async def verificar_token(x_api_key: str = Header(...)) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail="Serviço de DB não inicializado.")
     
     try:
-        response = supabase_client.table("usuarios").select("*").eq("api_key", x_api_key).single().execute()
+        # --- INÍCIO DA ATUALIZAÇÃO ---
+        # Remove .single() para evitar o erro PGRST116
+        response = supabase_client.table("usuarios").select("*").eq("api_key", x_api_key).execute()
         
-        if not response.data:
+        # Verifica manualmente se encontramos 0 ou 1 usuário
+        if not response.data or len(response.data) == 0:
+            print("[Auth] Token de API não encontrado (0 linhas).")
             raise HTTPException(status_code=401, detail="Token de API inválido")
-        
+        # --- FIM DA ATUALIZAÇÃO ---
+
         # Retorna o usuário completo (incluindo 'id' e 'email')
-        return response.data
+        return response.data[0]
         
     except Exception as e:
+        # Captura a exceção HTTP que acabamos de lançar
+        if isinstance(e, HTTPException):
+            raise e
+        
         print(f"[Auth] Erro ao verificar token: {e}")
         raise HTTPException(status_code=401, detail="Token de API inválido ou erro na consulta.")
 
