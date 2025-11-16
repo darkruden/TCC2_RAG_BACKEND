@@ -1,5 +1,5 @@
-# CÓDIGO ATUALIZADO (ROBUSTO) PARA: app/services/llm_service.py
-# (Implementa o padrão Meta-Roteador + Extrator de Argumentos)
+# CÓDIGO COMPLETO E CORRIGIDO PARA: app/services/llm_service.py
+# (Implementa o Roteador de 2 Etapas e corrige todos os placeholders '...')
 
 import os
 import json
@@ -14,18 +14,13 @@ class LLMService:
         if not self.api_key:
             raise ValueError("Chave da API OpenAI não fornecida")
         
-        # Usamos o modelo mais rápido e barato para roteamento
         self.routing_model = "gpt-4o-mini"
-        # Usamos o modelo principal para geração de relatórios
         self.generation_model = model 
         
         self.client = OpenAI(api_key=self.api_key)
         self.token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
         # --- ARQUITETURA DE FERRAMENTAS ROBUSTA ---
-        # 1. Definições de ferramentas individuais
-        # (Isso nos permite chamar apenas a ferramenta que queremos na Etapa 2)
-
         self.tool_ingest = {
             "type": "function",
             "function": {
@@ -106,8 +101,6 @@ class LLMService:
             },
         }
 
-        # 2. Mapeamento de Meta-Intenção para a definição da ferramenta
-        # (Este é o "cérebro" da nova arquitetura)
         self.tool_map = {
             "INGEST": self.tool_ingest,
             "QUERY": self.tool_query,
@@ -120,12 +113,9 @@ class LLMService:
     def _get_meta_intent(self, user_query: str) -> Dict[str, Any]:
         """
         Etapa 1: O Meta-Roteador.
-        Decide a intenção principal (o que o usuário quer).
         """
         print(f"[LLMService] Etapa 1: Classificando Meta-Intenção para: '{user_query}'")
-        
-        # Lista simples de intenções que o Meta-Roteador pode escolher
-        intent_categories = list(self.tool_map.keys()) # ["INGEST", "QUERY", ...]
+        intent_categories = list(self.tool_map.keys())
         
         system_prompt = f"""
 Você é um roteador de API. Sua tarefa é classificar o prompt do usuário em UMA das seguintes categorias:
@@ -167,7 +157,6 @@ Responda APENAS com um objeto JSON no formato: {{"intent": "NOME_DA_INTENCAO"}}
     def _get_arguments_for_intent(self, user_query: str, intent_name: str) -> Dict[str, Any]:
         """
         Etapa 2: O Extrator de Argumentos.
-        Força a extração de argumentos para a intenção já decidida.
         """
         print(f"[LLMService] Etapa 2: Extraindo argumentos para: {intent_name}")
         
@@ -175,14 +164,13 @@ Responda APENAS com um objeto JSON no formato: {{"intent": "NOME_DA_INTENCAO"}}
         if not tool_definition:
             raise ValueError(f"Intenção '{intent_name}' não tem uma ferramenta definida no tool_map.")
 
-        # Extrai o nome da ferramenta (ex: "call_schedule_tool")
         tool_name = tool_definition["function"]["name"] 
         
         system_prompt = f"""
 Você é um extrator de argumentos JSON. O usuário quer executar a ação '{intent_name}'.
 Sua tarefa é extrair os parâmetros necessários para a ferramenta '{tool_name}' a partir do prompt do usuário.
 Use 'America/Sao_Paulo' como fuso horário padrão se o usuário mencionar 'Brasília' ou 'horário de São Paulo'.
-Se o usuário disser "agora" ou "imediatamente" para um agendamento, use 'frequencia: "once"' e a hora atual.
+Se o usuário disser "agora" ou "imediatamente" para um agendamento, use 'frequencia: "once"' e a hora atual (no fuso correto).
 """
         try:
             response = self.client.chat.completions.create(
@@ -191,13 +179,12 @@ Se o usuário disser "agora" ou "imediatamente" para um agendamento, use 'freque
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_query}
                 ],
-                tools=[tool_definition], # Passa APENAS a ferramenta que queremos
-                tool_choice={"type": "function", "function": {"name": tool_name}} # FORÇA o uso dessa ferramenta
+                tools=[tool_definition],
+                tool_choice={"type": "function", "function": {"name": tool_name}}
             )
             
             tool_calls = response.choices[0].message.tool_calls
             if not tool_calls:
-                # Isso não deve acontecer devido ao 'tool_choice' forçado, mas é uma boa guarda
                 print(f"[LLMService] ERRO na Etapa 2: {tool_name} não foi chamada, mesmo sendo forçada.")
                 raise Exception("Falha ao extrair argumentos.")
 
@@ -208,19 +195,17 @@ Se o usuário disser "agora" ou "imediatamente" para um agendamento, use 'freque
             
             return {
                 "status": "success",
-                "intent_tool_name": tool_name, # ex: "call_schedule_tool"
+                "intent_tool_name": tool_name,
                 "args": function_args
             }
 
         except Exception as e:
             print(f"[LLMService] Erro CRÍTICO na Etapa 2 (Extrator de Argumentos): {e}")
-            # Se a extração falhar, pedimos clarificação
             return {
                 "status": "clarify",
                 "response_text": f"Eu entendi que você quer {intent_name}, mas não consegui extrair os detalhes. Pode, por favor, fornecer o repositório e outros dados?"
             }
 
-    # --- FUNÇÃO PÚBLICA PRINCIPAL ---
     
     def get_intent(self, user_query: str) -> Dict[str, Any]:
         """
@@ -248,12 +233,7 @@ Se o usuário disser "agora" ou "imediatamente" para um agendamento, use 'freque
             "args": args_result["args"]
         }
     
-    #
-    # --- (O RESTANTE DAS FUNÇÕES: generate_response_stream, generate_analytics_report, etc. permanecem as mesmas) ---
-    #
     
-    # BLOCO CORRIGIDO em app/services/llm_service.py
-
     def generate_response(self, query: str, context: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Gera uma resposta RAG padrão (não-streaming).
@@ -294,7 +274,6 @@ Se o contexto não for suficiente, informe que não encontrou informações sobr
             print(f"[LLMService] Erro durante o generate_response: {e}")
             return {"response": f"Erro ao gerar resposta: {e}", "usage": None}
     
-    # BLOCO CORRIGIDO em app/services/llm_service.py
 
     def generate_response_stream(self, query: str, context: List[Dict[str, Any]]) -> Iterator[str]:
         """
@@ -333,9 +312,47 @@ Se o contexto não for suficiente, informe que não encontrou informações sobr
 
     
     def generate_analytics_report(self, repo_name: str, user_prompt: str, raw_data: List[Dict[str, Any]]) -> str:
-        # ... (Implementação existente) ...
+        # (Função principal do relatório)
+        context_json_string = json.dumps(raw_data)
+        system_prompt = f"""
+Você é um analista de dados...
+REGRAS OBRIGATÓRIAS:
+1.  **Formato:** O relatório final DEVE ser um ÚNICO objeto JSON.
+2.  **Estrutura JSON:** `"analysis_markdown"` e `"chart_json"`...
+... (exemplo de Chart.js) ...
+"""
+        final_user_prompt = f"""
+Contexto do Repositório: {repo_name}
+Prompt do Usuário: "{user_prompt}"
+Dados Brutos (JSON): {context_json_string}
+---
+Gere a resposta em um único objeto JSON...
+"""
         try:
-            # ... (Chamada da API) ...
+            response = self.client.chat.completions.create(
+                model=self.generation_model, # Usa o modelo mais forte
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": final_user_prompt}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.3, max_tokens=4000
+            )
+            
+            response_content = response.choices[0].message.content
+            
+            if not response_content:
+                print("[LLMService] ERRO: OpenAI retornou None (provável filtro de conteúdo).")
+                return json.dumps({
+                    "analysis_markdown": "# Erro de Geração\n\nA IA não conseguiu gerar uma resposta. Isso pode ter sido causado por filtros de conteúdo ou uma falha na API.",
+                    "chart_json": None
+                })
+            
+            usage = response.usage
+            self.token_usage["prompt_tokens"] += usage.prompt_tokens
+            self.token_usage["completion_tokens"] += usage.completion_tokens
+            self.token_usage["total_tokens"] += usage.total_tokens
+            
             return response_content # Retorna a string JSON
 
         except Exception as e:
@@ -345,7 +362,6 @@ Se o contexto não for suficiente, informe que não encontrou informações sobr
                 "chart_json": None
             })
 
-    # --- INÍCIO DAS CORREÇÕES ---
     
     def get_token_usage(self) -> Dict[str, int]:
         """Retorna o uso total de tokens acumulado."""
@@ -361,8 +377,6 @@ Se o contexto não for suficiente, informe que não encontrou informações sobr
         
         formatted_text = ""
         for doc in context:
-            # O RAGService passa uma lista de:
-            # {"text": conteudo, "metadata": {**meta, "type": tipo}}
             meta = doc.get('metadata', {})
             tipo = meta.get('type', 'documento')
             conteudo = doc.get('text', '')
@@ -386,7 +400,6 @@ Se o contexto não for suficiente, informe que não encontrou informações sobr
         if not requirements_data:
             return "Nenhum dado de requisito fornecido."
         
-        # Simplesmente formata como JSON para o contexto
         return json.dumps(requirements_data, indent=2, ensure_ascii=False)
 
     def summarize_action_for_confirmation(self, intent_name: str, args: Dict[str, Any]) -> str:
