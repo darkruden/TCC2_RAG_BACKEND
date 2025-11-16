@@ -24,27 +24,15 @@
 ./app/services/router_service.py
 ./app/services/scheduler_service.py
 ./app/services/__init__.py
-./app/services/__pycache__
-./app/services/__pycache__/embedding_service.cpython-311.pyc
-./app/services/__pycache__/github_service.cpython-311.pyc
-./app/services/__pycache__/ingest_service.cpython-311.pyc
-./app/services/__pycache__/llm_service.cpython-311.pyc
-./app/services/__pycache__/rag_service.cpython-311.pyc
-./app/services/__pycache__/report_service.cpython-311.pyc
-./app/services/__pycache__/__init__.cpython-311.pyc
 ./app/utils
 ./app/__init__.py
-./app/__pycache__
-./app/__pycache__/main.cpython-311.pyc
-./app/__pycache__/__init__.cpython-311.pyc
 ./app.yaml
 ./arquivo de log.txt
 ./check_schedules.py
 ./comandos recorrentes.txt
+./Estrutura-Arvore-backend.txt
 ./Procfile
 ./requirements.txt
-./structurebackend.txt
-./structureFronted.txt
 ./tests
 ./tests/teste.http
 ./tests/test_chroma.py
@@ -54,7 +42,5 @@
 ./tests/test_llm_service.py
 ./tests/test_openai.py
 ./tests/test_report_service.py
-./tests/__pycache__
-./tests/__pycache__/test_openai.cpython-311.pyc
 ./worker.py
 ./worker_tasks.py
