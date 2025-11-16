@@ -384,9 +384,46 @@ Gere a resposta em um único objeto JSON...
             })
 
     # (Funções _format e get_token_usage sem alterações)
-    def get_token_usage(self) -> Dict[str, int]: ...
-    def _format_context(self, context: List[Dict[str, Any]]) -> str: ...
-    def _format_requirements_data(self, requirements_data: List[Dict[str, Any]]) -> str: ...
+    def get_token_usage(self) -> Dict[str, int]:
+        """Retorna o uso total de tokens acumulado."""
+        return self.token_usage
+    def _format_context(self, context: List[Dict[str, Any]]) -> str:
+        """
+        Formata os documentos de contexto (RAG) em uma string de texto 
+        para ser usada no prompt da LLM.
+        """
+        if not context:
+            return "Nenhum contexto encontrado."
+        
+        formatted_text = ""
+        for doc in context:
+            # O RAGService passa uma lista de:
+            # {"text": conteudo, "metadata": {**meta, "type": tipo}}
+            meta = doc.get('metadata', {})
+            tipo = meta.get('type', 'documento')
+            conteudo = doc.get('text', '')
+            
+            formatted_text += f"--- Fonte (Tipo: {tipo}) ---\n"
+            if 'url' in meta:
+                formatted_text += f"URL: {meta.get('url')}\n"
+            if 'autor' in meta:
+                formatted_text += f"Autor: {meta.get('autor')}\n"
+            if 'titulo' in meta:
+                formatted_text += f"Título: {meta.get('titulo')}\n"
+                
+            formatted_text += f"Conteúdo: {conteudo}\n\n"
+        
+        return formatted_text
+    
+    def _format_requirements_data(self, requirements_data: List[Dict[str, Any]]) -> str:
+        """
+        Formata dados de requisitos (atualmente não utilizado na arquitetura principal).
+        """
+        if not requirements_data:
+            return "Nenhum dado de requisito fornecido."
+        
+        # Simplesmente formata como JSON para o contexto
+        return json.dumps(requirements_data, indent=2, ensure_ascii=False)
 
     def summarize_action_for_confirmation(self, intent_name: str, args: Dict[str, Any]) -> str:
         """
