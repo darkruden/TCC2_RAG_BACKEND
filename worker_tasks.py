@@ -14,7 +14,8 @@ import os
 from datetime import datetime
 import pytz
 from typing import List, Dict, Any, Optional
-
+import requests # <-- Adicione esta importação
+import json     # <-- Adicione esta importação
 # -------------------------------------------------------------------
 # TAREFA (do Marco 1, 6, 7): Ingestão
 # -------------------------------------------------------------------
@@ -205,11 +206,40 @@ def enviar_relatorio_agendado(
         
         print(f"[WorkerTask] Gerando HTML do relatório...")
         
-        # 4. Gera o HTML
+        # --- INÍCIO DA ATUALIZAÇÃO (QuickChart) ---
+        
+        chart_image_url = None
+        try:
+            # Tenta parsear o JSON para extrair os dados do gráfico
+            report_data = json.loads(report_json_string)
+            chart_json = report_data.get("chart_json")
+            
+            if chart_json:
+                print("[WorkerTask] Gerando imagem estática do gráfico via QuickChart...")
+                qc_response = requests.post(
+                    'https://quickchart.io/chart/create',
+                    json={
+                        "chart": chart_json,
+                        "backgroundColor": "#ffffff", # Fundo branco
+                        "format": "png",
+                        "width": 600,
+                        "height": 400
+                    }
+                )
+                qc_response.raise_for_status()
+                chart_image_url = qc_response.json().get('url')
+                print(f"[WorkerTask] URL do gráfico gerada: {chart_image_url}")
+
+        except Exception as e:
+            print(f"[WorkerTask] AVISO: Falha ao gerar gráfico estático: {e}")
+            chart_image_url = None # Continua sem o gráfico se falhar
+
+        # 4. Gera o HTML (agora passando a URL da imagem)
         (html_content, _, _) = report_service.generate_report_content(
             repo_name,
             report_json_string,
-            "html"
+            "html",
+            chart_image_url # <-- Passa a nova URL
         )
         
         print(f"[WorkerTask] Enviando email para {user_email}...")

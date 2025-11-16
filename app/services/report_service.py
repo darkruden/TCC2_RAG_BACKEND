@@ -68,39 +68,36 @@ class ReportService:
             chart_json_obj = None
         else:
             html_body = markdown.markdown(analysis_markdown, extensions=['tables', 'fenced_code'])
+        # --- INÍCIO DA ATUALIZAÇÃO (HTML Template) ---
         
-        chart_script_data = json.dumps(chart_json_obj) if chart_json_obj else 'null'
-        
+        # Lógica para inserir a tag <img> (se a URL existir) ou esconder o container
+        chart_html = ""
+        if chart_image_url:
+            chart_html = f'<div class="chart-container"><img src="{chart_image_url}" alt="Gráfico de Análise" style="width:100%; max-width:600px;"></div>'
+        else:
+            # Se não houver gráfico, não exibe nada
+            chart_html = '<div class="chart-container" style="display:none;"></div>'
+
         template_html = f"""
 <!DOCTYPE html><html lang="pt-br"><head><meta charset="UTF-8"><title>Relatório: {repo_name}</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script><style>
-body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; background-color: #0d1117; color: #c9d1d9; padding: 20px 40px; }}
-main {{ max-width: 800px; margin: 0 auto; border: 1px solid #30363d; border-radius: 8px; padding: 24px; }}
-h1, h2, h3 {{ border-bottom: 1px solid #30363d; padding-bottom: 8px; color: #58a6ff; }}
-code {{ font-family: "SFMono-Regular", Consolas, monospace; background-color: #161b22; padding: 0.2em 0.4em; font-size: 85%; border-radius: 6px; }}
-pre {{ background-color: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; overflow: auto; }}
+<style>
+body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; background-color: #f6f8fa; color: #24292e; padding: 20px 40px; }}
+main {{ max-width: 800px; margin: 0 auto; border: 1px solid #d1d5da; border-radius: 8px; padding: 24px; background-color: #ffffff; }}
+h1, h2, h3 {{ border-bottom: 1px solid #d1d5da; padding-bottom: 8px; color: #0366d6; }}
+code {{ font-family: "SFMono-Regular", Consolas, monospace; background-color: #f6f8fa; padding: 0.2em 0.4em; font-size: 85%; border-radius: 6px; }}
+pre {{ background-color: #f6f8fa; border: 1px solid #d1d5da; border-radius: 6px; padding: 16px; overflow: auto; }}
 table {{ border-collapse: collapse; width: 100%; margin-top: 1em; margin-bottom: 1em; }}
-th, td {{ border: 1px solid #30363d; padding: 8px 12px; }}
-th {{ background-color: #161b22; }}
-.chart-container {{ background-color: #ffffff; border-radius: 8px; padding: 16px; margin-top: 20px; }}
+th, td {{ border: 1px solid #d1d5da; padding: 8px 12px; }}
+th {{ background-color: #f6f8fa; }}
+.chart-container {{ background-color: #ffffff; border-radius: 8px; padding: 16px; margin-top: 20px; text-align: center; }}
 </style></head><body><main>
 <h1>Relatório de Análise</h1><h2>Repositório: {repo_name}</h2>
 {html_body}
-<div class="chart-container"><canvas id="analyticsChart"></canvas></div>
-</main><script>
-const chartData = {chart_script_data};
-if (chartData && chartData.data) {{
-    try {{
-        const ctx = document.getElementById('analyticsChart').getContext('2d');
-        Chart.defaults.color = '#333';
-        new Chart(ctx, {{ type: chartData.type, data: chartData.data, options: chartData.options }});
-    }} catch (e) {{ console.error("Erro Chart.js:", e); }}
-}} else {{
-    const container = document.querySelector('.chart-container');
-    if (container) {{ container.style.display = 'none'; }}
-}}
-</script></body></html>
+{chart_html}
+</main>
+</body></html>
 """
+        # --- FIM DA ATUALIZAÇÃO ---
         unique_id = str(uuid.uuid4()).split('-')[0]
         filename = f"{repo_name.replace('/', '_')}_report_{unique_id}.html"
         return template_html, filename
