@@ -1,7 +1,6 @@
 # CÓDIGO CORRIGIDO PARA: app/main.py
 # (Corrigido o NameError de QUEUE_PREFIX)
 
-from tkinter import S
 from dotenv import load_dotenv
 load_dotenv()
 from fastapi import FastAPI, Depends, HTTPException, status, Header, Form, File, UploadFile, Request
