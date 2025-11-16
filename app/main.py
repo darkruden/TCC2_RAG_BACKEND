@@ -1,6 +1,7 @@
 # CÓDIGO CORRIGIDO PARA: app/main.py
 # (Corrigido o NameError de QUEUE_PREFIX)
 
+from tkinter import S
 from dotenv import load_dotenv
 load_dotenv()
 from fastapi import FastAPI, Depends, HTTPException, status, Header, Form, File, UploadFile, Request
@@ -80,7 +81,9 @@ class ChatResponse(BaseModel):
     response_type: str
     message: str
     job_id: Optional[str] = None
-    fontes: Optional[List[Dict[S, Any]]] = None
+    # --- CORREÇÃO AQUI ---
+    fontes: Optional[List[Dict[str, Any]]] = None
+    # --- FIM DA CORREÇÃO ---
     contexto: Optional[Dict[str, Any]] = None
 
 class StreamRequest(BaseModel):
