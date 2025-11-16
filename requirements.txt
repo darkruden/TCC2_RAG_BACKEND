@@ -15,3 +15,4 @@ boto3
 supabase
 requests
 sib-api-v3-sdk
+google-auth
