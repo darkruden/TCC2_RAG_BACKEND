@@ -78,9 +78,14 @@ class LLMService:
                         "prompt_relatorio": {"type": "string", "description": "O que o relatório deve conter."},
                         "frequencia": {"type": "string", "enum": ["once", "daily", "weekly", "monthly"], "description": "A frequência. Use 'once' para envio imediato."},
                         "hora": {"type": "string", "description": "A hora no formato HH:MM (24h)."},
-                        "timezone": {"type": "string", "description": "O fuso horário (ex: 'America/Sao_Paulo')."}
+                        "timezone": {"type": "string", "description": "O fuso horário (ex: 'America/Sao_Paulo')."},
+                        
+                        # --- INÍCIO DA ATUALIZAÇÃO ---
+                        "user_email": {"type": "string", "description": "O email do destinatário (ex: usuario@gmail.com)."}
+                        # --- FIM DA ATUALIZAÇÃO ---
                     },
-                    "required": ["repositorio", "prompt_relatorio", "frequencia", "hora", "timezone"],
+                    # O e-mail NÃO é obrigatório aqui; a lógica em main.py tratará disso
+                    "required": ["repositorio", "prompt_relatorio", "frequencia", "hora", "timezone"], 
                 },
             },
         }

@@ -159,21 +159,56 @@ async def _route_intent(
     elif intent == "call_schedule_tool":
         print(f"[ChatRouter] Rota: SCHEDULE. Args: {args}")
         
-        if not user_email: 
-            return {"response_type": "clarification", "message": "Para agendar relatórios, preciso do seu email.", "job_id": None}
+        # --- INÍCIO DA ATUALIZAÇÃO (Lógica de Email) ---
         
+        # 1. Extrai todos os argumentos
+        repo = args.get("repositorio")
+        prompt = args.get("prompt_relatorio")
+        freq = args.get("frequencia")
+        hora = args.get("hora")
+        tz = args.get("timezone")
+        email_from_args = args.get("user_email") # <-- Pega o email extraído pelo LLM
+        
+        # 2. Define o email final: usa o extraído do prompt, ou (como fallback) o enviado pelo frontend
+        final_email = email_from_args or user_email 
+        
+        # 3. Verifica se TEMOS um email
+        if not final_email: 
+            # Se não, pede
+            return {"response_type": "clarification", "message": "Para agendar relatórios, preciso do seu email.", "job_id": None}
+
+        # 4. Prepara os argumentos para a confirmação (incluindo o email)
+        confirmation_args = {
+            "repositorio": repo,
+            "prompt_relatorio": prompt,
+            "frequencia": freq,
+            "hora": hora,
+            "timezone": tz,
+            "user_email": final_email # Adiciona o email para a confirmação
+        }
+        # --- FIM DA ATUALIZAÇÃO ---
+        
+        # 5. Verifica se a última mensagem foi um "Sim"
         if is_confirmation:
-            print("[ChatRouter] Confirmação recebida. Executando agendamento.")
-            msg = create_schedule(user_email, **args)
+            print(f"[ChatRouter] Confirmação recebida. Executando agendamento para {final_email}.")
+            msg = create_schedule(
+                user_email=final_email, # <-- Usa o e-mail final
+                repo=repo, 
+                prompt=prompt, 
+                freq=freq, 
+                hora=hora, 
+                tz=tz
+            )
             return {"response_type": "answer", "message": msg, "job_id": None}
         else:
+            # 6. É a primeira vez? Pede confirmação.
             print("[ChatRouter] Agendamento detectado. Solicitando confirmação.")
             if not llm_service:
                 return {"response_type": "error", "message": "Erro: LLMService não inicializado para confirmação."}
             
             confirmation_text = llm_service.summarize_action_for_confirmation(
                 intent_name="agendamento", 
-                args=args
+                args=confirmation_args # Passa os args com o email
             )
             return {"response_type": "clarification", "message": confirmation_text, "job_id": None}
     
