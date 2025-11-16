@@ -1,10 +1,10 @@
 # CÓDIGO COMPLETO PARA: app/services/llm_service.py
-# (Corrigido com as importações faltantes de 'pytz' e 'datetime')
+# (Implementa Item 3: IA mais inteligente para extrair URLs)
 
 import os
 import json
-import pytz # <-- IMPORTAÇÃO CORRIGIDA
-from datetime import datetime # <-- IMPORTAÇÃO CORRIGIDA
+import pytz
+from datetime import datetime
 from openai import OpenAI
 from typing import List, Dict, Any, Optional
 
@@ -23,13 +23,13 @@ class LLMService:
             "total_tokens": 0
         }
 
-        # Definição das Ferramentas (Sem alterações)
+        # --- ATUALIZAÇÃO (Marco 7): Nova ferramenta ---
         self.intent_tools = [
             {
                 "type": "function",
                 "function": {
                     "name": "call_ingest_tool",
-                    "description": "Usado quando o usuário quer ingerir, re-ingerir ou indexar um repositório.",
+                    "description": "Usado quando o usuário quer ingerir, re-ingerir ou indexar um repositório. Extrai 'usuario/repo' de URLs completas.",
                     "parameters": {
                         "type": "object",
                         "properties": {"repositorio": {"type": "string", "description": "O nome do repositório no formato 'usuario/nome'."}},
@@ -41,7 +41,8 @@ class LLMService:
                 "type": "function",
                 "function": {
                     "name": "call_query_tool",
-                    "description": "Usado quando o usuário faz uma pergunta geral sobre um repositório (ex: 'quem...', 'o que...', 'me fale sobre...').",
+                    # --- ITEM 3: Adicionado exemplo na descrição ---
+                    "description": "Usado para perguntas sobre um repositório. Ex: 'quem fez mais commits no usuario/repo' OU 'me fale sobre https://github.com/usuario/repo'.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -56,12 +57,12 @@ class LLMService:
                 "type": "function",
                 "function": {
                     "name": "call_report_tool",
-                    "description": "Usado quando o usuário pede explicitamente um 'relatório', 'gráfico' ou 'análise' para download *imediato*.",
+                    "description": "Usado para pedir um 'relatório' ou 'gráfico' para download. Extrai 'usuario/repo' de URLs completas.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "repositorio": {"type": "string", "description": "O nome do repositório no formato 'usuario/nome'."},
-                            "prompt_usuario": {"type": "string", "description": "A instrução para o relatório (ex: 'gere um gráfico de pizza dos commits')."}
+                            "prompt_usuario": {"type": "string", "description": "A instrução para o relatório."}
                         },
                         "required": ["repositorio", "prompt_usuario"],
                     },
@@ -71,15 +72,15 @@ class LLMService:
                 "type": "function",
                 "function": {
                     "name": "call_schedule_tool",
-                    "description": "Usado quando o usuário quer agendar um relatório para o futuro (ex: 'todo dia', 'semanalmente', 'às 17h').",
+                    "description": "Usado para agendar um relatório (ex: 'todo dia às 17h'). Extrai 'usuario/repo' de URLs completas.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "repositorio": {"type": "string", "description": "O nome do repositório no formato 'usuario/nome'."},
-                            "prompt_relatorio": {"type": "string", "description": "O que o relatório deve conter (ex: 'análise de commits da equipe')."},
-                            "frequencia": {"type": "string", "enum": ["daily", "weekly", "monthly"], "description": "A frequência do relatório."},
-                            "hora": {"type": "string", "description": "A hora do dia para o envio, no formato HH:MM (24h)."},
-                            "timezone": {"type": "string", "description": "O fuso horário da solicitação (ex: 'America/Sao_Paulo', 'UTC')."}
+                            "prompt_relatorio": {"type": "string", "description": "O que o relatório deve conter."},
+                            "frequencia": {"type": "string", "enum": ["daily", "weekly", "monthly"], "description": "A frequência."},
+                            "hora": {"type": "string", "description": "A hora no formato HH:MM (24h)."},
+                            "timezone": {"type": "string", "description": "O fuso horário (ex: 'America/Sao_Paulo')."}
                         },
                         "required": ["repositorio", "prompt_relatorio", "frequencia", "hora", "timezone"],
                     },
@@ -89,12 +90,12 @@ class LLMService:
                 "type": "function",
                 "function": {
                     "name": "call_save_instruction_tool",
-                    "description": "Usado quando o usuário quer salvar ou persistir uma instrução para futuros relatórios (ex: 'lembre-se disso', 'salve esta preferência').",
+                    "description": "Usado para salvar uma instrução para futuros relatórios. Extrai 'usuario/repo' de URLs completas.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "repositorio": {"type": "string", "description": "O repositório ao qual esta instrução se aplica."},
-                            "instrucao": {"type": "string", "description": "A instrução específica que o usuário quer salvar (ex: 'sempre use gráficos de pizza e tabelas')."}
+                            "instrucao": {"type": "string", "description": "A instrução específica que o usuário quer salvar."}
                         },
                         "required": ["repositorio", "instrucao"],
                     },
@@ -109,12 +110,13 @@ class LLMService:
             
         print(f"[LLMService] Classificando intenção para: '{user_query}'")
         
-        # Esta linha agora funciona, pois 'pytz' e 'datetime' estão importados
+        # --- ITEM 3: Prompt de Sistema ATUALIZADO ---
         system_prompt = f"""
 Você é um roteador de API. Sua tarefa é analisar o prompt do usuário e chamar a ferramenta correta.
-Se o usuário mencionar um fuso horário (ex: 'Brasília'), use a formatação IANA (ex: 'America/Sao_Paulo').
-Se nenhum fuso horário for mencionado, assuma 'America/Sao_Paulo'.
-A data atual (contexto) é: {datetime.now(pytz.utc).astimezone(pytz.timezone('America/Sao_Paulo')).isoformat()}
+REGRAS IMPORTANTES:
+1.  **Extração de Repositório:** Se o usuário fornecer uma URL completa do GitHub (ex: `https://github.com/usuario/repo`), você DEVE extrair apenas o nome `usuario/repo` para o parâmetro 'repositorio'.
+2.  **Fuso Horário:** Se o usuário mencionar um fuso horário (ex: 'Brasília'), use a formatação IANA (ex: 'America/Sao_Paulo'). Se nenhum fuso horário for mencionado, assuma 'America/Sao_Paulo'.
+3.  **Data Atual:** A data atual (contexto) é: {datetime.now(pytz.utc).astimezone(pytz.timezone('America/Sao_Paulo')).isoformat()}
 """
 
         try:
@@ -147,8 +149,10 @@ A data atual (contexto) é: {datetime.now(pytz.utc).astimezone(pytz.timezone('Am
             raise Exception(f"Erro ao processar sua solicitação na LLM: {e}")
     
     # --- FUNÇÕES (generate_response, generate_analytics_report, etc.) ---
-    # (O restante do arquivo permanece exatamente como está no Marco 4)
+    # (O restante do arquivo permanece exatamente como está no Marco 4/7)
+    
     def generate_response(self, query: str, context: List[Dict[str, Any]]) -> Dict[str, Any]:
+        # (Sem alterações)
         formatted_context = self._format_context(context)
         system_prompt = """
 Você é um assistente de engenharia de software de elite...
@@ -168,8 +172,7 @@ Você é um assistente de engenharia de software de elite...
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=0.3, 
-            max_tokens=1000
+            temperature=0.3, max_tokens=1000
         )
         usage = response.usage
         self.token_usage["prompt_tokens"] += usage.prompt_tokens
@@ -177,14 +180,11 @@ Você é um assistente de engenharia de software de elite...
         self.token_usage["total_tokens"] += usage.total_tokens
         return {
             "response": response.choices[0].message.content,
-            "usage": {
-                "prompt_tokens": usage.prompt_tokens,
-                "completion_tokens": usage.completion_tokens,
-                "total_tokens": usage.total_tokens
-            }
+            "usage": { "prompt_tokens": usage.prompt_tokens, "completion_tokens": usage.completion_tokens, "total_tokens": usage.total_tokens }
         }
     
     def generate_analytics_report(self, repo_name: str, user_prompt: str, raw_data: List[Dict[str, Any]]) -> str:
+        # (Sem alterações)
         context_json_string = json.dumps(raw_data)
         system_prompt = f"""
 Você é um analista de dados e engenheiro de software de elite...
@@ -210,8 +210,7 @@ Gere a resposta em um único objeto JSON...
                     {"role": "user", "content": final_user_prompt}
                 ],
                 response_format={"type": "json_object"},
-                temperature=0.3,
-                max_tokens=4000
+                temperature=0.3, max_tokens=4000
             )
             usage = response.usage
             self.token_usage["prompt_tokens"] += usage.prompt_tokens
@@ -229,7 +228,7 @@ Gere a resposta em um único objeto JSON...
         return self.token_usage
     
     def _format_context(self, context: List[Dict[str, Any]]) -> str:
-        # (Função helper sem alterações)
+        # (Sem alterações)
         formatted = ""
         for i, doc in enumerate(context):
             doc_type = doc.get("metadata", {}).get("type", "documento")
@@ -245,7 +244,7 @@ Gere a resposta em um único objeto JSON...
         return formatted
     
     def _format_requirements_data(self, requirements_data: List[Dict[str, Any]]) -> str:
-        # (Função helper sem alterações)
+        # (Sem alterações)
         formatted = ""
         for i, req in enumerate(requirements_data):
             formatted += f"Requisito {i+1}: {req.get('title', '')}\nDescrição: {req.get('description', '')}\n"
