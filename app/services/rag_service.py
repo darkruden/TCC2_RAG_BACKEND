@@ -1,13 +1,14 @@
-# CÓDIGO COMPLETO PARA: app/services/rag_service.py
-# (Adicionada a função 'gerar_resposta_rag_stream')
+# CÓDIGO COMPLETO E ATUALIZADO PARA: app/services/rag_service.py
+# (Refatorado para Multi-Tenancy com 'user_id')
 
 from app.services.metadata_service import MetadataService
 from app.services.llm_service import LLMService
-from typing import Dict, Any, Iterator
+from typing import Dict, Any, Iterator, List
 
 class RAGService:
     """
     Serviço que coordena o RAG (Retrieval-Augmented Generation).
+    Refatorado para Multi-Tenancy (tudo é filtrado por user_id).
     """
     def __init__(self):
         try:
@@ -28,20 +29,26 @@ class RAGService:
             formatted_context_text += f"--- Fonte (Tipo: {tipo}) ---\n"
             if tipo == 'commit': formatted_context_text += f"URL: {meta.get('url')}\nAutor: {meta.get('autor')}\n"
             else: formatted_context_text += f"URL: {meta.get('url')}\nTítulo: {meta.get('titulo')}\n"
-            formatted_context_text += f"Conteúdo: {conteudo}\n\n"
+            formatted_text += f"Conteúdo: {conteudo}\n\n"
             context_for_llm_api.append({"text": conteudo, "metadata": {**meta, "type": tipo}})
-        return formatted_context_text, context_for_llm_api
+        return formatted_text, context_for_llm_api
 
-    def gerar_resposta_rag(self, query: str, repo_name: str) -> Dict[str, Any]:
+    def gerar_resposta_rag(self, user_id: str, query: str, repo_name: str) -> Dict[str, Any]:
         """
         Função RAG principal (NÃO-STREAMING).
-        (Sem alterações)
+        Agora vinculada a um user_id.
         """
         if not self.llm_service or not self.metadata_service:
             raise Exception("RAGService não pode operar; serviços dependentes falharam.")
-        print(f"[RAGService] Recebida consulta para {repo_name}: '{query}'")
+        print(f"[RAGService] Recebida consulta (User: {user_id}) para {repo_name}: '{query}'")
         try:
-            documentos_similares = self.metadata_service.find_similar_documents(query_text=query, repo_name=repo_name, k=5)
+            # Passa o user_id para o serviço de metadados
+            documentos_similares = self.metadata_service.find_similar_documents(
+                user_id=user_id, 
+                query_text=query, 
+                repo_name=repo_name, 
+                k=5
+            )
             contexto_formatado, contexto_para_llm = self._format_context_for_llm(documentos_similares)
             print("[RAGService] Contexto enviado para LLMService...")
             resposta_llm = self.llm_service.generate_response(query=query, context=contexto_para_llm)
@@ -51,21 +58,23 @@ class RAGService:
             print(f"[RAGService] ERRO CRÍTICO ao gerar resposta RAG: {e}")
             raise
 
-    # --- NOVA FUNÇÃO (Marco 8 - Streaming) ---
-    def gerar_resposta_rag_stream(self, query: str, repo_name: str) -> Iterator[str]:
+    
+    def gerar_resposta_rag_stream(self, user_id: str, query: str, repo_name: str) -> Iterator[str]:
         """
         Função RAG que faz a busca e cede (yields) a resposta da LLM em stream.
+        Agora vinculada a um user_id.
         """
         if not self.llm_service or not self.metadata_service:
             print("[RAGService-Stream] Erro: Serviços dependentes falharam.")
             yield "Erro: Serviços dependentes falharam."
             return
 
-        print(f"[RAGService-Stream] Recebida consulta para {repo_name}: '{query}'")
+        print(f"[RAGService-Stream] Recebida consulta (User: {user_id}) para {repo_name}: '{query}'")
         
         try:
-            # 1. Buscar contexto (RAG) - (Isso ainda é rápido)
+            # 1. Buscar contexto (RAG) - Passa o user_id
             documentos_similares = self.metadata_service.find_similar_documents(
+                user_id=user_id,
                 query_text=query,
                 repo_name=repo_name,
                 k=5

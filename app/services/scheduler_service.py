@@ -1,5 +1,5 @@
-# CÓDIGO ATUALIZADO PARA: app/services/scheduler_service.py
-# (Adicionados logs de depuração)
+# CÓDIGO COMPLETO E ATUALIZADO PARA: app/services/scheduler_service.py
+# (Refatorado para Multi-Tenancy com 'user_id')
 
 import os
 import pytz
@@ -28,45 +28,41 @@ def _convert_time_to_utc(local_time_str: str, timezone_str: str) -> str:
     para a hora correspondente em UTC.
     """
     try:
-        # Pega a data de hoje (apenas como referência)
         today = datetime.now(pytz.timezone(timezone_str)).date()
-        
-        # Pega a hora
         local_time = datetime.strptime(local_time_str, '%H:%M').time()
-        
-        # Combina data e hora local
         local_dt = datetime.combine(today, local_time)
-        
-        # Adiciona a informação do timezone
         local_tz = pytz.timezone(timezone_str)
         local_dt = local_tz.localize(local_dt)
-        
-        # Converte para UTC e retorna apenas a string da hora (HH:MM:SS)
         utc_dt = local_dt.astimezone(pytz.utc)
         return utc_dt.strftime('%H:%M:%S')
         
     except Exception as e:
         print(f"[SchedulerService] Erro ao converter timezone: {e}. Usando UTC como fallback.")
-        # Fallback: se o timezone for inválido, assume que a hora já é UTC
         try:
             return datetime.strptime(local_time_str, '%H:%M').strftime('%H:%M:%S')
         except:
-            return "00:00:00" # Fallback final
+            return "00:00:00"
 
-def create_schedule(user_email: str, repo: str, prompt: str, freq: str, hora: str, tz: str) -> str:
+def create_schedule(
+    user_id: str, # <-- NOVO
+    user_email: str, 
+    repo: str, 
+    prompt: str, 
+    freq: str, 
+    hora: str, 
+    tz: str
+) -> str:
     """
     Cria uma nova solicitação de agendamento e envia o email de verificação.
+    Agora vinculada a um user_id.
     """
     if not supabase:
         raise Exception("Serviço Supabase não está inicializado.")
     
-    # --- INÍCIO DA ADIÇÃO (DEBUG) ---
-    print(f"--- [DEBUG create_schedule] ---")
-    print(f"Email: {user_email}, Repo: {repo}, Freq: {freq}, Hora: {hora}, TZ: {tz}")
-    # --- FIM DA ADIÇÃO (DEBUG) ---
+    print(f"[SchedulerService] Criando agendamento (User: {user_id}) para {user_email} em {repo}")
     
     try:
-        # 1. Converte a hora local para a hora UTC (que o 'check_schedules.py' usa)
+        # 1. Converte a hora local para a hora UTC
         hora_utc_str = _convert_time_to_utc(hora, tz)
         
         # 2. Verifica se o email já foi verificado
@@ -80,20 +76,18 @@ def create_schedule(user_email: str, repo: str, prompt: str, freq: str, hora: st
             email_status = email_check.data[0]
             if email_status["verificado"]:
                 email_ja_verificado = True
-                print("[SchedulerService-Debug] Email JÁ está verificado.") # <-- LOG
+                print(f"[SchedulerService] Email {user_email} já está verificado.")
             else:
                 token = email_status["token_verificacao"]
-                print("[SchedulerService-Debug] Email NÃO verificado, usando token existente.") # <-- LOG
         else:
-            # Email nunca visto, cria novo registro de verificação
-            print("[SchedulerService-Debug] Email novo. Criando registro de verificação.") # <-- LOG
+            print(f"[SchedulerService] Email {user_email} é novo. Criando registro de verificação.")
             new_email_entry = supabase.table("emails_verificados").insert({"email": user_email}) \
                 .execute()
             token = new_email_entry.data[0]["token_verificacao"]
 
         # 3. Salva o novo agendamento no banco
-        # (Se o email já for verificado, 'ativo' será True. Senão, 'ativo' será False)
         novo_agendamento = {
+            "user_id": user_id, # <-- ADICIONADO
             "user_email": user_email,
             "repositorio": repo,
             "prompt_relatorio": prompt,
@@ -107,11 +101,10 @@ def create_schedule(user_email: str, repo: str, prompt: str, freq: str, hora: st
         
         # 4. Envia email de verificação (se necessário)
         if not email_ja_verificado and token:
-            print("[SchedulerService-Debug] ENVIANDO email de verificação...") # <-- LOG
+            print(f"[SchedulerService] Enviando email de verificação para {user_email}.")
             send_verification_email(user_email, str(token))
             return "Agendamento criado. Por favor, verifique seu email para ativar."
         else:
-            print("[SchedulerService-Debug] PULO envio de email (usuário já verificado).") # <-- LOG
             return "Agendamento criado e ativado com sucesso."
 
     except Exception as e:
@@ -121,6 +114,7 @@ def create_schedule(user_email: str, repo: str, prompt: str, freq: str, hora: st
 def verify_email_token(email: str, token: str) -> bool:
     """
     Verifica um token de email e ativa os agendamentos pendentes.
+    (Esta função permanece a mesma, pois é baseada em email, não em user_id).
     """
     if not supabase:
         raise Exception("Serviço Supabase não está inicializado.")
