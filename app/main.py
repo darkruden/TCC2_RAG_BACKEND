@@ -68,13 +68,26 @@ except Exception as e:
     supabase_client = None
 
 try:
+    # Importa os serviços que faltavam
+    from app.services.embedding_service import EmbeddingService
+    from app.services.metadata_service import MetadataService
+    
+    # Inicializa na ordem correta
     llm_service = LLMService()
-    metadata_service = MetadataService()
-    print("[Main] LLMService e MetadataService inicializados.")
+    
+    embedding_service = EmbeddingService(
+        model_name=os.getenv("EMBEDDING_MODEL_NAME", "text-embedding-3-small")
+    )
+    # Injeta a dependência
+    metadata_service = MetadataService(embedding_service=embedding_service)
+    
+    print("[Main] LLMService, EmbeddingService e MetadataService inicializados.")
 except Exception as e:
-    print(f"[Main] ERRO: Falha ao inicializar LLMService/MetadataService: {e}")
+    print(f"[Main] ERRO: Falha ao inicializar serviços (LLM, Embedding, Metadata): {e}")
+    traceback.print_exc() # Adiciona isso para ver o erro completo
     llm_service = None
     metadata_service = None
+    embedding_service = None # Garante que ele fique nulo se falhar
 
 # --- NOVO: Configuração de Auth ---
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
