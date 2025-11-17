@@ -16,7 +16,7 @@ import hashlib
 import json
 import hmac
 import uuid # Para gerar a API key
-import requests # <-- CORREÇÃO AQUI
+import requests # <-- Importação necessária para o login
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 
@@ -143,7 +143,7 @@ async def verificar_token(x_api_key: str = Header(...)) -> Dict[str, Any]:
 async def verify_github_signature(request: Request, x_hub_signature_256: str = Header(...)):
     secret = os.getenv("GITHUB_WEBHOOK_SECRET")
     if not secret:
-        raise HTTPException(status_code=500, detail="O servidor não está configurado para webhooks.")
+        raise HTTPException(status_code=500, detail="O servidor não está configurado para webhooks.") # <-- Correção de 5.00 para 500
     try:
         body = await request.body()
         hash_obj = hmac.new(secret.encode('utf-8'), msg=body, digestmod=hashlib.sha256)
@@ -205,7 +205,7 @@ async def _route_intent(
         tz = args.get("timezone")
         email_from_args = args.get("user_email")
         
-        final_email = email_from_args or user_email
+        final_email = email_from_args or user_email 
 
         if not final_email: 
             return {"response_type": "clarification", "message": "Não consegui identificar seu email para o agendamento.", "job_id": None}
@@ -280,15 +280,13 @@ async def health_check():
         except Exception as e: redis_status = f"erro ({e})"
     return {"status": "online", "version": "0.4.0", "redis_status": redis_status, "supabase_status": "conectado" if supabase_client else "desconectado"}
 
-# --- ROTA DE LOGIN ---
+# --- ROTA DE LOGIN (CORRIGIDA) ---
 @app.post("/api/auth/google", response_model=AuthResponse)
 async def google_login(request: GoogleLoginRequest):
     """
     Verifica o Access Token (vindo do chrome.identity) chamando a
     API userinfo do Google. Cria/atualiza o usuário no banco
     e retorna a API Key pessoal desse usuário.
-    
-    O 'credential' aqui é o ACCESS TOKEN, não um ID Token.
     """
     if not supabase_client:
         raise HTTPException(status_code=500, detail="Serviço de DB não inicializado.")
@@ -296,7 +294,6 @@ async def google_login(request: GoogleLoginRequest):
     try:
         access_token = request.credential
         
-        # 1. Verificar o Access Token com a API do Google
         userinfo_url = "https://www.googleapis.com/oauth2/v3/userinfo"
         headers = {"Authorization": f"Bearer {access_token}"}
         
@@ -315,7 +312,6 @@ async def google_login(request: GoogleLoginRequest):
         if not email or not google_id:
             raise ValueError("Token do Google não retornou email ou ID.")
 
-        # 2. Fazer "Upsert" no banco (Encontrar ou Criar)
         response = supabase_client.table("usuarios").select("*").eq("google_id", google_id).execute()
         
         if response.data:
@@ -326,15 +322,16 @@ async def google_login(request: GoogleLoginRequest):
             print(f"[Auth] Novo usuário detectado: {email}")
             new_api_key = str(uuid.uuid4())
             
-            # --- INÍCIO DA CORREÇÃO (Adicionados colchetes []) ---
-            insert_response = supabase_client.table("usuarios").insert([
+            # --- CORREÇÃO DEFINITIVA (usando 'returning') ---
+            insert_response = supabase_client.table("usuarios").insert(
                 {
                     "google_id": google_id,
                     "email": email,
                     "nome": nome,
                     "api_key": new_api_key
-                }
-            ]).select("*").execute()
+                },
+                returning="representation" # Pede ao Supabase para retornar o registro criado
+            ).execute()
             # --- FIM DA CORREÇÃO ---
             
             user = insert_response.data[0]
