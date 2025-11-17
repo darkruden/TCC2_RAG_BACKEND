@@ -151,7 +151,7 @@ async def verify_github_signature(request: Request, x_hub_signature_256: str = H
     # ... (Sem mudanças aqui) ...
     secret = os.getenv("GITHUB_WEBHOOK_SECRET")
     if not secret:
-        raise HTTPException(status_code=5.00, detail="O servidor não está configurado para webhooks.")
+        raise HTTPException(status_code=500, detail="O servidor não está configurado para webhooks.")
     try:
         body = await request.body()
         hash_obj = hmac.new(secret.encode('utf-8'), msg=body, digestmod=hashlib.sha256)
