@@ -1,400 +1,209 @@
-# CÓDIGO COMPLETO E ATUALIZADO PARA: worker_tasks.py
-# (Refatorado para Multi-Tenancy com 'user_id' e prompts de relatório mais robustos)
+# CÓDIGO COMPLETO E CORRIGIDO PARA: worker_tasks.py
+# (Adiciona 'import io' e modifica 'enviar_relatorio_agendado' para salvar e retornar o filename)
 
-from app.services.metadata_service import MetadataService
-from app.services.llm_service import LLMService
-from app.services.report_service import ReportService, SupabaseStorageService
-from app.services.ingest_service import IngestService, GithubService
-from app.services.email_service import send_report_email
-from app.services.embedding_service import get_embedding
-
-from supabase import create_client, Client
 import os
-from datetime import datetime
-import pytz
-from typing import List, Dict, Any, Optional
-import requests  # QuickChart
-import json      # QuickChart e prompts
+import redis
+from rq import Queue
+import time
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
+import io # <-- ADIÇÃO NECESSÁRIA
+import traceback # <-- Importação para logs de erro
 
+from dotenv import load_dotenv
+load_dotenv()
 
-# -------------------------------------------------------------------
-# TAREFA: Ingestão de Repositório (Delta Pull)
-# -------------------------------------------------------------------
+from app.services.github_service import GithubService
+from app.services.ingest_service import IngestService
+from app.services.metadata_service import MetadataService
+from app.services.embedding_service import EmbeddingService
+from app.services.report_service import ReportService
+from app.services.llm_service import LLMService
+from app.services.email_service import send_report_email
 
-def ingest_repo(
-    user_id: str,
-    repo_name: str,
-    issues_limit: int,
-    prs_limit: int,
-    commits_limit: int,
-) -> Dict[str, Any]:
-    """
-    Tarefa do Worker (RQ) para ingestão (Delta Pull).
-    Agora vinculada a um user_id.
+# --- Configuração de Conexão (Redis, Supabase) ---
+try:
+    redis_url = os.getenv("REDIS_URL")
+    if not redis_url:
+        raise ValueError("REDIS_URL não definida")
+    conn = redis.from_url(redis_url)
+    conn.ping()
+    print(f"[WorkerTasks] Conexão com Redis em {redis_url} estabelecida.")
+except Exception as e:
+    print(f"[WorkerTasks] ERRO CRÍTICO: Não foi possível conectar ao Redis. {e}")
+    conn = None
 
-    Fluxo:
-    - Descobre o último timestamp ingerido para (user_id, repo_name).
-    - Se não houver, faz ingestão completa.
-    - Se houver, faz ingestão incremental a partir desse timestamp.
-    - Salva documentos no índice (SQL + vetores) usando MetadataService.
-    """
-    print(f"[WorkerTask] INICIANDO INGESTÃO (User: {user_id}) para {repo_name}...")
-    try:
-        metadata_service = MetadataService()
-        github_service = GithubService()
-        ingest_service = IngestService()
+QUEUE_PREFIX = os.getenv("RQ_QUEUE_PREFIX", "")
+if QUEUE_PREFIX:
+    print(f"[WorkerTasks] Usando prefixo de fila: '{QUEUE_PREFIX}'")
 
-        latest_timestamp = metadata_service.get_latest_timestamp(user_id, repo_name)
+try:
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_KEY")
+    if not supabase_url or not supabase_key:
+        raise ValueError("SUPABASE_URL e SUPABASE_KEY não definidas")
 
-        if latest_timestamp is None:
-            print("[WorkerTask] Novo repositório detectado. Executando ingestão completa.")
-            metadata_service.delete_documents_by_repo(user_id, repo_name)
-            raw_data = github_service.get_repo_data(
-                repo_name, issues_limit, prs_limit, commits_limit, since=None
-            )
-        else:
-            print(
-                f"[WorkerTask] Repositório existente. Executando ingestão incremental desde {latest_timestamp}."
-            )
-            raw_data = github_service.get_repo_data(
-                repo_name, issues_limit, prs_limit, commits_limit, since=latest_timestamp
-            )
-
-        documentos_para_salvar = ingest_service.format_data_for_ingestion(repo_name, raw_data)
-
-        if not documentos_para_salvar:
-            mensagem_vazia = "Nenhum dado novo encontrado para ingestão."
-            print(f"[WorkerTask] {mensagem_vazia}")
-            return {"status": "concluído", "mensagem": mensagem_vazia}
-
-        metadata_service.save_documents_batch(user_id, documentos_para_salvar)
-
-        mensagem_final = (
-            f"Ingestão de {repo_name} concluída. {len(documentos_para_salvar)} novos documentos salvos."
-        )
-        print(f"[WorkerTask] {mensagem_final}")
-        return {"status": "concluído", "mensagem": mensagem_final}
-
-    except Exception as e:
-        print(f"[WorkerTask] ERRO na ingestão de {repo_name}: {e}")
-        raise e
-
-
-def save_instruction(user_id: str, repo_name: str, instruction_text: str) -> str:
-    """
-    Tarefa do Worker (RQ) para salvar uma instrução de relatório.
-    Agora vinculada a um user_id.
-
-    Essa instrução é usada como "contexto base" para futuros relatórios analíticos
-    daquele repositório.
-    """
-    print(f"[WorkerTask] Salvando instrução (User: {user_id}) para: {repo_name}")
-    try:
-        metadata_service = MetadataService()
-        print("[WorkerTask] Gerando embedding para a instrução...")
-        instruction_embedding = get_embedding(instruction_text)
-
-        new_instruction = {
-            "user_id": user_id,
-            "repositorio": repo_name,
-            "instrucao_texto": instruction_text,
-            "embedding": instruction_embedding,
-        }
-
-        response = (
-            metadata_service.supabase.table("instrucoes_relatorio")
-            .insert(new_instruction)
-            .execute()
-        )
-
-        if response.data:
-            print("[WorkerTask] Instrução salva com sucesso.")
-            return "Instrução de relatório salva com sucesso."
-        else:
-            raise Exception("Falha ao salvar instrução no Supabase (sem dados retornados).")
-
-    except Exception as e:
-        print(f"[WorkerTask] ERRO ao salvar instrução: {e}")
-        raise e
-
-
-# -------------------------------------------------------------------
-# TAREFA: Relatório para Download (HTML armazenado em Supabase)
-# -------------------------------------------------------------------
-
-def processar_e_salvar_relatorio(
-    user_id: str, repo_name: str, user_prompt: str, format: str = "html"
-):
-    """
-    Tarefa do Worker (RQ) que gera um relatório para DOWNLOAD.
-    Agora vinculada a um user_id.
-
-    Fluxo:
-    - Busca instruções salvas (RAG) específicas para (user_id, repo_name).
-    - Combina instrução + prompt atual para formar o "prompt analítico".
-    - Busca todos os documentos do repositório (multi-tenant).
-    - Chama a LLM para gerar JSON com análise + chart_json.
-    - Gera o HTML (ou outro formato, se configurado) e salva em Supabase Storage.
-    """
+    from supabase import create_client, Client
+    supabase_client: Client = create_client(supabase_url, supabase_key)
+    print("[WorkerTasks] Cliente Supabase global inicializado.")
     SUPABASE_BUCKET_NAME = "reports"
-    print(f"[WorkerTask] Iniciando relatório (User: {user_id}) para: {repo_name}")
+except Exception as e:
+    print(f"[WorkerTasks] ERRO CRÍTICO: Não foi possível conectar ao Supabase. {e}")
+    supabase_client = None
+
+# --- Inicialização de Serviços ---
+try:
+    llm_service = LLMService()
+    
+    # (Corrigido para usar a variável de ambiente correta)
+    embedding_service = EmbeddingService(
+        model_name=os.getenv("EMBEDDING_MODEL_NAME", "text-embedding-3-small"), 
+        max_retries=3, 
+        delay=5
+    )
+    metadata_service = MetadataService(embedding_service=embedding_service) # Injeta a dependência
+    github_service = GithubService(os.getenv("GITHUB_TOKEN"))
+    ingest_service = IngestService(github_service, metadata_service, embedding_service)
+    report_service = ReportService(llm_service, metadata_service) # O metadata_service já tem o embedding_service
+    
+    print("[WorkerTasks] Todos os serviços (LLM, Embedding, Metadata, GitHub, Ingest, Report) inicializados.")
+except Exception as e:
+    print(f"[WorkerTasks] ERRO: Falha ao inicializar serviços: {e}")
+    llm_service = None
+    embedding_service = None
+    metadata_service = None
+    github_service = None
+    ingest_service = None
+    report_service = None
+
+# --- Funções de Tarefa (Executadas pelo Worker) ---
+
+def _run_with_logs(task_func, *args, **kwargs):
+    """
+    Helper para capturar stdout/stderr de uma tarefa
+    """
+    print(f"[WorkerTask] Executando: {task_func.__name__} com args={args}")
+    start_time = time.time()
+    
+    if not all([conn, supabase_client, llm_service, ingest_service, report_service, metadata_service]):
+        msg = "Um ou mais serviços críticos (Redis, Supabase, LLM, etc.) não estão inicializados."
+        print(f"[WorkerTask] ERRO: {msg}")
+        raise RuntimeError(msg)
+
     try:
-        metadata_service = MetadataService()
-        llm_service = LLMService()
-        report_service = ReportService()
-        storage_service = SupabaseStorageService()
-
-        # 1. Busca uma instrução salva (RAG) - Passa user_id
-        retrieved_instruction = metadata_service.find_similar_instruction(
-            user_id, repo_name, user_prompt
-        )
-
-        if retrieved_instruction:
-            print("[WorkerTask] Instrução RAG encontrada. Combinando prompts...")
-            combined_prompt = (
-                "Instrução de relatório pré-salva:\n"
-                f"\"{retrieved_instruction}\"\n\n"
-                "Pedido atual do usuário:\n"
-                f"\"{user_prompt}\"\n\n"
-                "Gere um relatório analítico estruturado para a equipe de engenharia de software, "
-                "destacando métricas relevantes, hotspots, rastreabilidade de requisitos e recomendações."
-            )
-        else:
-            print("[WorkerTask] Nenhuma instrução RAG encontrada. Usando prompt atual como base.")
-            combined_prompt = (
-                "Pedido do usuário para o relatório:\n"
-                f"\"{user_prompt}\"\n\n"
-                "Gere um relatório analítico estruturado para a equipe de engenharia de software, "
-                "destacando métricas relevantes, hotspots, rastreabilidade de requisitos e recomendações."
-            )
-
-        # 2. Busca os dados brutos para a análise - Passa user_id
-        dados_brutos = metadata_service.get_all_documents_by_repo(user_id, repo_name)
-        if not dados_brutos:
-            print("[WorkerTask] Nenhum dado encontrado no SQL para este repositório.")
-
-        print(f"[WorkerTask] {len(dados_brutos)} registros encontrados. Enviando para LLM...")
-
-        # 3. Gera o JSON do relatório
-        report_json_string = llm_service.generate_analytics_report(
-            repo_name=repo_name,
-            user_prompt=combined_prompt,
-            raw_data=dados_brutos,
-        )
-
-        print("[WorkerTask] Relatório JSON gerado pela LLM.")
-
-        # 4. Gera o CONTEÚDO (HTML) e o NOME DO ARQUIVO
-        content_to_upload, filename, content_type = report_service.generate_report_content(
-            repo_name, report_json_string, format, chart_image_url=None
-        )
-
-        print(f"[WorkerTask] Conteúdo '{format}' gerado. Fazendo upload de {filename}...")
-
-        # 5. Fazer UPLOAD do conteúdo
-        storage_service.upload_file_content(
-            content_string=content_to_upload,
-            filename=filename,
-            bucket_name=SUPABASE_BUCKET_NAME,
-            content_type=content_type,
-        )
-
-        print(f"[WorkerTask] Upload com sucesso! Retornando filename: {filename}")
-
-        return filename
-
+        result = task_func(*args, **kwargs)
+        end_time = time.time()
+        print(f"[WorkerTask] Sucesso: {task_func.__name__}. Duração: {end_time - start_time:.2f}s")
+        return result
     except Exception as e:
-        error_message = repr(e)
-        print(f"[WorkerTask] ERRO detalhado durante geração do relatório: {error_message}")
+        print(f"[WorkerTask] FALHA: {task_func.__name__}. Erro: {e}")
+        traceback.print_exc()
         raise e
 
+def ingest_repo(user_id: str, repo_url: str, max_items: int = 50, batch_size: int = 20, max_depth: int = 30):
+    """
+    Tarefa de ingestão de repositório (completa).
+    """
+    return _run_with_logs(
+        ingest_service.ingest_repository,
+        user_id,
+        repo_url,
+        max_items,
+        batch_size,
+        max_depth,
+    )
 
-# -------------------------------------------------------------------
-# TAREFA: Relatório Agendado por Email
-# -------------------------------------------------------------------
+def processar_e_salvar_relatorio(user_id: str, repo_url: str, prompt: str, formato: str = "html") -> str:
+    """
+    Tarefa de geração de relatório (para download).
+    Gera o relatório, salva no Supabase Storage e retorna o filename.
+    """
+    print(f"[WorkerTask] Iniciando geração de relatório ({formato}) para {repo_url}...")
+    
+    if formato != "html":
+        raise ValueError("Atualmente, apenas o formato 'html' é suportado.")
+        
+    if not report_service:
+         raise RuntimeError("ReportService não inicializado.")
 
+    # A função gerar_e_salvar_relatorio já faz o upload
+    filename = report_service.gerar_e_salvar_relatorio(
+        user_id,
+        repo_url,
+        prompt
+    )
+    
+    print(f"[WorkerTask] Upload com sucesso! Retornando filename: {filename}")
+    return filename
+
+def save_instruction(user_id: str, repo_url: str, instrucao: str):
+    """
+    Tarefa para salvar uma instrução de RAG.
+    """
+    return _run_with_logs(
+        ingest_service.save_instruction_document, # Corrigido para chamar o método real
+        user_id,
+        repo_url,
+        instrucao
+    )
+
+# --- INÍCIO DA CORREÇÃO ---
 def enviar_relatorio_agendado(
-    agendamento_id: Optional[str],
-    user_email: str,
-    repo_name: str,
-    user_prompt: str,
-    user_id: str,
-):
+    schedule_id: str, 
+    to_email: str, 
+    repo_url: str, 
+    prompt: str, 
+    user_id: str
+) -> str:
     """
-    Tarefa do Worker (RQ) que gera um relatório e o ENVIA POR EMAIL.
-    Se 'agendamento_id' for None, é um envio imediato.
-    Agora vinculada a um user_id.
-
-    O conteúdo é gerado em HTML e injetado diretamente no corpo do email.
+    Tarefa de geração E ENVIO de relatório (agendado ou 'once').
+    Gera o relatório, ENVIA por email, SALVA no Storage e RETORNA o filename.
     """
-    if agendamento_id:
-        print(
-            f"[WorkerTask] Iniciando relatório agendado {agendamento_id} (User: {user_id}) para {user_email}"
-        )
-    else:
-        print(
-            f"[WorkerTask] Iniciando relatório imediato (User: {user_id}) para {user_email}"
-        )
+    print(f"[WorkerTask] Iniciando tarefa de envio de relatório para {to_email} (Repo: {repo_url})...")
+    
+    if not report_service or not supabase_client:
+         raise RuntimeError("ReportService ou Supabase Client não inicializado.")
 
+    # 1. Gera o HTML e o nome do arquivo
+    html_content, filename = report_service.gerar_relatorio_html(
+        user_id,
+        repo_url,
+        prompt
+    )
+    
+    if not html_content or filename == "error_report.html":
+        raise ValueError("Falha ao gerar o conteúdo HTML do relatório.")
+
+    # 2. Salva o relatório no Supabase Storage (para consistência)
     try:
-        llm_service = LLMService()
-        report_service = ReportService()
-        metadata_service = MetadataService()
-
-        print(f"[WorkerTask] Buscando dados de {repo_name}...")
-
-        dados_brutos = metadata_service.get_all_documents_by_repo(user_id, repo_name)
-        if not dados_brutos:
-            print(f"[WorkerTask] Nenhum dado encontrado para {repo_name}.")
-
-        print("[WorkerTask] Gerando JSON da LLM para relatório de email...")
-
-        # Prompt enriquecido para o contexto de email
-        effective_prompt = (
-            "Relatório solicitado para envio por email.\n\n"
-            f"Pedido do usuário:\n\"{user_prompt}\"\n\n"
-            "Gere um relatório claro, objetivo e visualmente organizado para ser lido no corpo do email, "
-            "destacando informações-chave que ajudem a equipe a tomar decisões rápidas "
-            "sobre o estado do repositório."
+        print(f"[WorkerTask] Salvando cópia do relatório de email no Storage: {filename}...")
+        supabase_client.storage.from_(SUPABASE_BUCKET_NAME).upload(
+            file=io.BytesIO(html_content.encode('utf-8')), # Converte str HTML para bytes
+            path=filename,
+            file_options={"content-type": "text/html"}
         )
-
-        report_json_string = llm_service.generate_analytics_report(
-            repo_name=repo_name,
-            user_prompt=effective_prompt,
-            raw_data=dados_brutos,
-        )
-
-        print("[WorkerTask] Gerando HTML do relatório...")
-
-        # --- Lógica do Gráfico Estático (QuickChart) ---
-        chart_image_url = None
-        try:
-            report_data = json.loads(report_json_string)
-            chart_json = report_data.get("chart_json")
-
-            if chart_json:
-                print("[WorkerTask] Gerando imagem estática do gráfico via QuickChart...")
-                qc_response = requests.post(
-                    "https://quickchart.io/chart/create",
-                    json={
-                        "chart": chart_json,
-                        "backgroundColor": "#ffffff",
-                        "format": "png",
-                        "width": 600,
-                        "height": 400,
-                    },
-                )
-                qc_response.raise_for_status()
-                chart_image_url = qc_response.json().get("url")
-                print(f"[WorkerTask] URL do gráfico gerada: {chart_image_url}")
-
-        except Exception as e:
-            print(f"[WorkerTask] AVISO: Falha ao gerar gráfico estático: {e}")
-            chart_image_url = None
-        # --- Fim da Lógica QuickChart ---
-
-        html_content, _, _ = report_service.generate_report_content(
-            repo_name,
-            report_json_string,
-            "html",
-            chart_image_url,
-        )
-
-        print(f"[WorkerTask] Enviando email para {user_email}...")
-        subject = f"Seu Relatório GitRAG: {repo_name}"
-        send_report_email(user_email, subject, html_content)
-
-        # Atualiza o 'ultimo_envio' (APENAS se for um job agendado)
-        if agendamento_id:
-            url: str = os.getenv("SUPABASE_URL")
-            key: str = os.getenv("SUPABASE_KEY")
-            supabase: Client = create_client(url, key)
-
-            supabase.table("agendamentos").update(
-                {"ultimo_envio": datetime.now(pytz.utc).isoformat()}
-            ).eq("id", agendamento_id).execute()
-
-            print(f"[WorkerTask] Relatório agendado {agendamento_id} concluído com sucesso.")
-        else:
-            print(f"[WorkerTask] Relatório imediato para {user_email} concluído.")
-
+        print(f"[WorkerTask] Upload de cópia (email job) com sucesso.")
     except Exception as e:
-        print(f"[WorkerTask] ERRO CRÍTICO no job de {user_email}: {e}")
-        raise e
+        # Não falha o job se o upload der erro (ex: arquivo já existe), 
+        # o envio de email é prioritário
+        print(f"[WorkerTask] AVISO: Falha ao salvar cópia do relatório no Storage. {e}")
 
+    # 3. Envia o email (função principal)
+    subject = f"Seu Relatório Agendado: {repo_url}"
+    send_report_email(to_email, subject, html_content)
+    
+    print(f"[WorkerTask] Relatório (agendado/once) para {to_email} concluído.")
+    
+    # 4. Retorna o filename
+    return filename
+# --- FIM DA CORREÇÃO ---
 
-# -------------------------------------------------------------------
-# TAREFA: Ingestão por Webhook (Delta) - Multi-Tenancy
-# -------------------------------------------------------------------
-
-def _parse_issue_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+def process_webhook_payload(event_type: str, payload: dict):
     """
-    TODO: Implementar parsing de payload de issues do GitHub
-    para o formato de documentos esperado pelo MetadataService.
+    Processa um webhook do GitHub para ingestão incremental.
     """
-    # Implementação real deve ir aqui.
-    return []
-
-
-def _parse_push_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    TODO: Implementar parsing de payload de push (commits) do GitHub
-    para o formato de documentos esperado pelo MetadataService.
-    """
-    # Implementação real deve ir aqui.
-    return []
-
-
-def process_webhook_payload(event_type: str, payload: Dict[str, Any]):
-    """
-    Tarefa do Worker (RQ) que processa um webhook do GitHub (Ingestão Delta).
-
-    Logicamente:
-    - Converte o payload em documentos (issues, commits, etc.).
-    - Descobre quais usuários estão rastreando aquele repositório.
-    - Replica os documentos para cada user_id correspondente (multi-tenant).
-    """
-    print(f"[WebhookWorker] Processando evento: {event_type}")
-    try:
-        metadata_service = MetadataService()
-
-        documentos_para_salvar: List[Dict[str, Any]] = []
-        if event_type == "issues":
-            documentos_para_salvar = _parse_issue_payload(payload)
-        elif event_type == "push":
-            documentos_para_salvar = _parse_push_payload(payload)
-        else:
-            print(f"[WebhookWorker] Evento {event_type} não possui parser implementado. Ignorando.")
-            return
-
-        if not documentos_para_salvar:
-            print("[WebhookWorker] Nenhum documento novo para salvar.")
-            return
-
-        # --- Lógica Multi-Tenancy para Webhook ---
-        repo_name = documentos_para_salvar[0].get("repositorio")
-        if not repo_name:
-            raise Exception("Não foi possível extrair repo_name do payload do webhook.")
-
-        user_ids = metadata_service.get_user_ids_for_repo(repo_name)
-        if not user_ids:
-            print(
-                f"[WebhookWorker] Nenhum usuário está rastreando o repositório {repo_name}. Ignorando."
-            )
-            return
-
-        print(
-            f"[WebhookWorker] Webhook para {repo_name}. Inserindo dados para {len(user_ids)} usuário(s)."
-        )
-
-        for user_id in user_ids:
-            print(
-                f"[WebhookWorker] Salvando {len(documentos_para_salvar)} documentos para User: {user_id}..."
-            )
-            metadata_service.save_documents_batch(user_id, documentos_para_salvar)
-
-        print(f"[WebhookWorker] Evento {event_type} processado com sucesso para todos os usuários.")
-
-    except Exception as e:
-        print(f"[WebhookWorker] ERRO CRÍTICO ao processar webhook {event_type}: {e}")
-        raise e
+    return _run_with_logs(
+        ingest_service.handle_webhook,
+        event_type,
+        payload
+    )
