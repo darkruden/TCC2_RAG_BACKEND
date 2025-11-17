@@ -21,15 +21,17 @@
 ./app/services/metadata_service.py
 ./app/services/rag_service.py
 ./app/services/report_service.py
-./app/services/router_service.py
 ./app/services/scheduler_service.py
 ./app/services/__init__.py
 ./app/utils
 ./app/__init__.py
 ./app.yaml
+./Arquitetura-atual-backend.txt
 ./arquivo de log.txt
 ./check_schedules.py
 ./comandos recorrentes.txt
+./docs
+./docs/Variaveis.txt
 ./Estrutura-Arvore-backend.txt
 ./Procfile
 ./requirements.txt
