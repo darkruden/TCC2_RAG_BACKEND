@@ -1,157 +1,132 @@
-# CÓDIGO COMPLETO E ATUALIZADO PARA: app/services/rag_service.py
-# (Refatorado para Multi-Tenancy com 'user_id' e contexto melhor formatado)
+# CÓDIGO COMPLETO E CORRIGIDO PARA: app/services/rag_service.py
+# (Refatorado para Injeção de Dependência e Multi-Tenancy)
 
+import os
+import json
 from app.services.metadata_service import MetadataService
 from app.services.llm_service import LLMService
+from app.services.embedding_service import EmbeddingService # Importa a CLASSE
 from typing import Dict, Any, Iterator, List, Tuple
 
-
 class RAGService:
-    """
-    Serviço que coordena o RAG (Retrieval-Augmented Generation).
-    Refatorado para Multi-Tenancy (tudo é filtrado por user_id).
-
-    Responsabilidades:
-    - Buscar documentos semelhantes no índice vetorial (por usuário + repositório).
-    - Formatar o contexto em duas formas:
-      1) texto legível para exibir na interface (para o usuário ver "o que foi usado");
-      2) estrutura leve para ser consumida pela LLM (texto + metadados).
-    - Delegar a geração da resposta ao LLMService.
-    """
-
     def __init__(self):
         try:
             self.llm_service = LLMService()
-            self.metadata_service = MetadataService()
-            print("[RAGService] Serviços LLM e Metadata inicializados.")
+            # Cria as instâncias de dependência
+            self.embedding_service = EmbeddingService(
+                model_name=os.getenv("EMBEDDING_MODEL_NAME", "text-embedding-3-small")
+            )
+            self.metadata_service = MetadataService(embedding_service=self.embedding_service)
+            
+            print("[RAGService] Serviços (LLM, Embedding, Metadata) inicializados.")
         except Exception as e:
             print(f"[RAGService] Erro crítico ao inicializar serviços dependentes: {e}")
-            raise
+            self.llm_service = None
+            self.metadata_service = None
 
     def _format_context_for_llm(self, context_docs: List[Dict[str, Any]]) -> Tuple[str, List[Dict[str, Any]]]:
-        """
-        Converte a lista de documentos (vindos do MetadataService) em:
-        - um texto legível para exibir na UI;
-        - uma lista de dicionários no formato esperado pelo LLMService.
-
-        Cada item de saída para a LLM tem:
-        {
-          "text": <conteúdo>,
-          "metadata": { ... , "type": <tipo_do_documento> }
-        }
-        """
+        # (Esta função parece estar faltando no seu arquivo original, mas é necessária)
         if not context_docs:
-            return "Nenhum contexto encontrado para este repositório.", []
+            return "Nenhum contexto encontrado.", []
 
-        formatted_context_text = ""
-        context_for_llm_api: List[Dict[str, Any]] = []
-
+        # Formata o contexto para a LLM
+        context_list = []
         for doc in context_docs:
-            tipo = doc.get("tipo", "documento")
-            meta = doc.get("metadados", {}) or {}
-            conteudo = doc.get("conteudo", "")
+            context_list.append({
+                "path": doc.get('file_path', 'N/A'),
+                "content": doc.get('conteudo', 'N/A')
+            })
+        
+        # Cria as "fontes" para a UI
+        fontes_ui = []
+        for doc in context_docs:
+            fontes_ui.append({
+                "tipo": doc.get("tipo", "arquivo"),
+                "id": doc.get("id"),
+                "similaridade": doc.get("similarity"),
+                "url": doc.get("metadados", {}).get("url", "URL N/A"),
+                "path": doc.get('file_path', doc.get('metadados', {}).get('titulo', 'N/A'))
+            })
+            
+        return json.dumps(context_list), fontes_ui
 
-            formatted_context_text += f"--- Fonte (Tipo: {tipo}) ---\n"
 
-            # Commits geralmente têm autor + URL
-            if tipo == "commit":
-                formatted_context_text += f"URL: {meta.get('url')}\n"
-                if meta.get("autor"):
-                    formatted_context_text += f"Autor: {meta.get('autor')}\n"
-            else:
-                # Issues / PRs / outros documentos
-                formatted_context_text += f"URL: {meta.get('url')}\n"
-                if meta.get("titulo"):
-                    formatted_context_text += f"Título: {meta.get('titulo')}\n"
+    def gerar_resposta_rag(self, user_id: str, prompt_usuario: str, repo_name: str) -> Dict[str, Any]:
+        if not self.metadata_service or not self.llm_service:
+            raise Exception("Serviços de RAG não inicializados.")
 
-            formatted_context_text += f"Conteúdo: {conteudo}\n\n"
-
-            # Estrutura enxuta para o LLMService (que irá reformatar para o prompt final)
-            context_for_llm_api.append(
-                {
-                    "text": conteudo,
-                    "metadata": {
-                        **meta,
-                        "type": tipo,
-                    },
-                }
-            )
-
-        return formatted_context_text, context_for_llm_api
-
-    def gerar_resposta_rag(self, user_id: str, query: str, repo_name: str) -> Dict[str, Any]:
-        """
-        Rota principal do RAG (NÃO-STREAMING).
-        - Filtra documentos pelo user_id + repo_name.
-        - Passa o contexto formatado para a LLM.
-        - Retorna o texto da resposta + o contexto legível para ser exibido no frontend.
-        """
-        if not self.llm_service or not self.metadata_service:
-            raise Exception("RAGService não pode operar; serviços dependentes falharam.")
-
-        print(f"[RAGService] Recebida consulta (User: {user_id}) para {repo_name}: '{query}'")
-
+        print(f"[RAGService] Recebida consulta (User: {user_id}) para {repo_name}: '{prompt_usuario}'")
         try:
             documentos_similares = self.metadata_service.find_similar_documents(
                 user_id=user_id,
-                query_text=query,
+                query_text=prompt_usuario,
                 repo_name=repo_name,
                 k=5,
             )
-
-            contexto_formatado, contexto_para_llm = self._format_context_for_llm(documentos_similares)
-
+            instrucao = self.metadata_service.find_similar_instruction(
+                user_id=user_id,
+                repo_name=repo_name,
+                query_text=prompt_usuario
+            )
+            
+            contexto_para_llm, fontes_ui = self._format_context_for_llm(documentos_similares)
+            
             print("[RAGService] Contexto enviado para LLMService...")
-            resposta_llm = self.llm_service.generate_response(query=query, context=contexto_para_llm)
-            print("[RAGService] Resposta recebida da LLM.")
+            resposta = self.llm_service.generate_rag_response(
+                contexto=contexto_para_llm,
+                prompt=prompt_usuario,
+                instrucao_rag=instrucao
+            )
 
-            return {"texto": resposta_llm["response"], "contexto": contexto_formatado}
-
+            return {
+                "response_type": "answer",
+                "message": resposta,
+                "job_id": None,
+                "fontes": fontes_ui
+            }
         except Exception as e:
             print(f"[RAGService] ERRO CRÍTICO ao gerar resposta RAG: {e}")
-            raise
+            return {"response_type": "error", "message": f"Erro: {e}", "job_id": None}
 
     def gerar_resposta_rag_stream(self, user_id: str, query: str, repo_name: str) -> Iterator[str]:
-        """
-        Função RAG que faz a busca e cede (yields) a resposta da LLM em stream.
-        Agora vinculada a um user_id.
-        """
-        if not self.llm_service or not self.metadata_service:
-            print("[RAGService-Stream] Erro: Serviços dependentes falharam.")
-            yield "Erro: Serviços dependentes falharam."
+        if not self.metadata_service or not self.llm_service:
+            yield f"Erro: Serviços dependentes falharam."
             return
 
         print(f"[RAGService-Stream] Recebida consulta (User: {user_id}) para {repo_name}: '{query}'")
-
         try:
             documentos_similares = self.metadata_service.find_similar_documents(
-                user_id=user_id,
-                query_text=query,
-                repo_name=repo_name,
-                k=5,
+                user_id=user_id, query_text=query, repo_name=repo_name, k=5,
+            )
+            instrucao = self.metadata_service.find_similar_instruction(
+                user_id=user_id, repo_name=repo_name, query_text=query
             )
 
-            _, contexto_para_llm = self._format_context_for_llm(documentos_similares)
+            contexto_para_llm, fontes_ui = self._format_context_for_llm(documentos_similares)
+
+            # Envia as fontes primeiro
+            yield json.dumps(fontes_ui) + "[[SOURCES_END]]"
 
             print("[RAGService-Stream] Contexto enviado para LLMService (stream)...")
-
-            for token in self.llm_service.generate_response_stream(query=query, context=contexto_para_llm):
+            for token in self.llm_service.generate_rag_response_stream(
+                contexto=contexto_para_llm,
+                prompt=query,
+                instrucao_rag=instrucao
+            ):
                 yield token
-
             print("[RAGService-Stream] Streaming concluído.")
-
         except Exception as e:
             print(f"[RAGService-Stream] ERRO CRÍTICO ao gerar resposta RAG: {e}")
             yield f"\n\n**Erro ao gerar resposta:** {e}"
 
-
-# --- Instância Singleton (Atualizada) ---
+# --- Instância Singleton (para o main.py importar) ---
 try:
     _rag_service_instance = RAGService()
     gerar_resposta_rag = _rag_service_instance.gerar_resposta_rag
     gerar_resposta_rag_stream = _rag_service_instance.gerar_resposta_rag_stream
-    print("[RAGService] Instância de serviço criada e funções exportadas.")
 except Exception as e:
-    print(f"[RAGService] Falha ao criar instância de serviço: {e}")
-    gerar_resposta_rag = None
-    gerar_resposta_rag_stream = None
+    print(f"[RAGService] FALHA AO INICIALIZAR SINGLETON: {e}")
+    def gerar_resposta_rag(*args, **kwargs):
+        return {"response_type": "error", "message": f"Erro na inicialização do RAGService: {e}", "job_id": None}
+    def gerar_resposta_rag_stream(*args, **kwargs):
+        yield f"Erro na inicialização do RAGService: {e}"

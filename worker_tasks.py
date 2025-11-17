@@ -1,5 +1,5 @@
 # CÓDIGO COMPLETO E CORRIGIDO PARA: worker_tasks.py
-# (Corrige o bug 'download/null')
+# (Usa a arquitetura de Classes e corrige o bug 'download/null')
 
 import os
 import redis
@@ -13,6 +13,7 @@ import traceback
 from dotenv import load_dotenv
 load_dotenv()
 
+# Importa as CLASSES dos serviços
 from app.services.github_service import GithubService
 from app.services.ingest_service import IngestService
 from app.services.metadata_service import MetadataService
@@ -68,6 +69,7 @@ try:
     print("[WorkerTasks] Todos os serviços (LLM, Embedding, Metadata, GitHub, Ingest, Report) inicializados.")
 except Exception as e:
     print(f"[WorkerTasks] ERRO: Falha ao inicializar serviços: {e}")
+    traceback.print_exc() # Printa o stack trace completo do erro de inicialização
     llm_service = None
     embedding_service = None
     metadata_service = None
@@ -79,7 +81,7 @@ except Exception as e:
 
 def _run_with_logs(task_func, *args, **kwargs):
     """
-    Helper para capturar stdout/stderr de uma tarefa
+    Helper para garantir que os serviços estejam prontos antes de rodar.
     """
     print(f"[WorkerTask] Executando: {task_func.__name__} com args={args}")
     start_time = time.time()
@@ -100,9 +102,6 @@ def _run_with_logs(task_func, *args, **kwargs):
         raise e
 
 def ingest_repo(user_id: str, repo_url: str, max_items: int = 50, batch_size: int = 20, max_depth: int = 30):
-    """
-    Tarefa de ingestão de repositório (completa).
-    """
     return _run_with_logs(
         ingest_service.ingest_repository,
         user_id,
@@ -113,31 +112,17 @@ def ingest_repo(user_id: str, repo_url: str, max_items: int = 50, batch_size: in
     )
 
 def processar_e_salvar_relatorio(user_id: str, repo_url: str, prompt: str, formato: str = "html") -> str:
-    """
-    Tarefa de geração de relatório (para download).
-    Gera o relatório, salva no Supabase Storage e retorna o filename.
-    """
     print(f"[WorkerTask] Iniciando geração de relatório ({formato}) para {repo_url}...")
-    
-    if formato != "html":
-        raise ValueError("Atualmente, apenas o formato 'html' é suportado.")
-        
     if not report_service:
          raise RuntimeError("ReportService não inicializado.")
 
     filename = report_service.gerar_e_salvar_relatorio(
-        user_id,
-        repo_url,
-        prompt
+        user_id, repo_url, prompt
     )
-    
     print(f"[WorkerTask] Upload com sucesso! Retornando filename: {filename}")
     return filename
 
 def save_instruction(user_id: str, repo_url: str, instrucao: str):
-    """
-    Tarefa para salvar uma instrução de RAG.
-    """
     return _run_with_logs(
         ingest_service.save_instruction_document,
         user_id,
@@ -145,7 +130,6 @@ def save_instruction(user_id: str, repo_url: str, instrucao: str):
         instrucao
     )
 
-# --- INÍCIO DA CORREÇÃO (BUG 'download/null') ---
 def enviar_relatorio_agendado(
     schedule_id: str, 
     to_email: str, 
@@ -153,53 +137,38 @@ def enviar_relatorio_agendado(
     prompt: str, 
     user_id: str
 ) -> str:
-    """
-    Tarefa de geração E ENVIO de relatório (agendado ou 'once').
-    Gera o relatório, ENVIA por email, SALVA no Storage e RETORNA o filename.
-    """
     print(f"[WorkerTask] Iniciando tarefa de envio de relatório para {to_email} (Repo: {repo_url})...")
     
     if not report_service or not supabase_client:
          raise RuntimeError("ReportService ou Supabase Client não inicializado.")
 
-    # 1. Gera o HTML e o nome do arquivo
     html_content, filename = report_service.gerar_relatorio_html(
-        user_id,
-        repo_url,
-        prompt
+        user_id, repo_url, prompt
     )
     
     if not html_content or filename == "error_report.html":
         raise ValueError("Falha ao gerar o conteúdo HTML do relatório.")
 
-    # 2. Salva o relatório no Supabase Storage (para consistência)
     try:
         print(f"[WorkerTask] Salvando cópia do relatório de email no Storage: {filename}...")
         supabase_client.storage.from_(SUPABASE_BUCKET_NAME).upload(
-            file=io.BytesIO(html_content.encode('utf-8')), # Converte str HTML para bytes
+            file=io.BytesIO(html_content.encode('utf-8')),
             path=filename,
             file_options={"content-type": "text/html"}
         )
         print(f"[WorkerTask] Upload de cópia (email job) com sucesso.")
     except Exception as e:
-        # Não falha o job se o upload der erro (ex: arquivo já existe), 
-        # o envio de email é prioritário
-        print(f"[WorkerTask] AVISO: Falha ao salvar cópia do relatório no Storage. {e}")
+        print(f"[WorkerTask] AVISO: Falha ao salvar cópia no Storage. {e}")
 
-    # 3. Envia o email (função principal)
     subject = f"Seu Relatório Agendado: {repo_url}"
     send_report_email(to_email, subject, html_content)
     
     print(f"[WorkerTask] Relatório (agendado/once) para {to_email} concluído.")
     
-    # 4. Retorna o filename (Esta é a correção para o bug 'download/null')
+    # Retorna o filename para corrigir o bug 'download/null'
     return filename
-# --- FIM DA CORREÇÃO ---
 
 def process_webhook_payload(event_type: str, payload: dict):
-    """
-    Processa um webhook do GitHub para ingestão incremental.
-    """
     return _run_with_logs(
         ingest_service.handle_webhook,
         event_type,

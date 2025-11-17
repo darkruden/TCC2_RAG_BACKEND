@@ -1,3 +1,4 @@
+# CÓDIGO COMPLETO PARA: requirements.txt
 fastapi
 uvicorn[standard]
 python-dotenv
@@ -8,11 +9,10 @@ python-multipart
 pytest
 redis
 rq
-pinecone
 sqlalchemy
 psycopg2-binary
 boto3 
 supabase
 requests
 sib-api-v3-sdk
-google-auth
+tiktoken # <-- ADICIONADO

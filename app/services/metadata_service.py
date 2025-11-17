@@ -6,16 +6,11 @@ from supabase import create_client, Client
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
-# --- INÍCIO DA CORREÇÃO ---
 # Importa a CLASSE, não as funções
 from app.services.embedding_service import EmbeddingService
-# --- FIM DA CORREÇÃO ---
 
 class MetadataService:
     def __init__(self, embedding_service: EmbeddingService):
-        """
-        Inicializa o cliente Supabase e recebe a instância do EmbeddingService.
-        """
         try:
             url: str = os.getenv("SUPABASE_URL")
             key: str = os.getenv("SUPABASE_KEY")
@@ -25,12 +20,10 @@ class MetadataService:
             self.supabase: Client = create_client(url, key)
             print("[MetadataService] Cliente Supabase inicializado com sucesso.")
             
-            # --- INÍCIO DA CORREÇÃO ---
             if not embedding_service:
                 raise ValueError("EmbeddingService é obrigatório para MetadataService.")
             self.embedding_service = embedding_service
             print("[MetadataService] Dependência (EmbeddingService) injetada.")
-            # --- FIM DA CORREÇÃO ---
             
         except Exception as e:
             print(f"[MetadataService] Erro ao inicializar Supabase: {e}")
@@ -42,12 +35,8 @@ class MetadataService:
             raise Exception("Serviços Supabase ou Embedding não estão inicializados.")
         if not documents:
             return
-            
         try:
             textos_para_embedding = [doc["conteudo"] for doc in documents]
-            print(f"[MetadataService] Gerando {len(textos_para_embedding)} embeddings em lote...")
-            
-            # --- CORREÇÃO ---
             embeddings = self.embedding_service.get_embeddings_batch(textos_para_embedding)
             
             documentos_para_salvar = []
@@ -56,7 +45,6 @@ class MetadataService:
                 doc["user_id"] = user_id
                 documentos_para_salvar.append(doc)
             
-            print(f"[MetadataService] Salvando {len(documentos_para_salvar)} documentos (User: {user_id})...")
             self.supabase.table("documentos").insert(documentos_para_salvar).execute()
         except Exception as e:
             print(f"[MetadataService] Erro CRÍTICO ao salvar lote no Supabase: {e}")
@@ -78,19 +66,13 @@ class MetadataService:
         if not self.supabase or not self.embedding_service:
             raise Exception("Serviços Supabase ou Embedding não estão inicializados.")
         try:
-            print(f"[MetadataService] Gerando embedding para a consulta RAG (User: {user_id})...")
-            
-            # --- CORREÇÃO ---
             query_embedding = self.embedding_service.get_embedding(query_text)
-            
-            print(f"[MetadataService] Executando busca vetorial (match_documents_user)...")
             response = self.supabase.rpc('match_documents_user', {
                 'query_embedding': query_embedding,
                 'match_repositorio': repo_name,
                 'match_user_id': user_id,
                 'match_count': k
             }).execute()
-
             return response.data or []
         except Exception as e:
             print(f"[MetadataService] Erro na busca vetorial: {e}")
@@ -103,7 +85,6 @@ class MetadataService:
                 'repo_name_filter': repo_name,
                 'user_id_filter': user_id
             }).execute()
-            
             latest_timestamp_str = response.data
             if latest_timestamp_str:
                 return datetime.fromisoformat(latest_timestamp_str)
@@ -113,7 +94,6 @@ class MetadataService:
             return None
 
     def get_all_documents_for_repository(self, user_id: str, repo_name: str) -> List[Dict[str, Any]]:
-        """Busca todos os documentos (conteúdo e file_path) para um usuário/repo."""
         if not self.supabase: raise Exception("Serviço Supabase não está inicializado.")
         try:
             print(f"[MetadataService] Buscando todos os documentos (User: {user_id}) de: {repo_name}")
@@ -130,18 +110,13 @@ class MetadataService:
         if not self.supabase or not self.embedding_service:
             raise Exception("Serviços Supabase ou Embedding não estão inicializados.")
         try:
-            print(f"[MetadataService] Buscando instrução RAG (User: {user_id}) para: {repo_name}")
-            
-            # --- CORREÇÃO ---
             query_embedding = self.embedding_service.get_embedding(query_text)
-            
             response = self.supabase.rpc('match_instructions_user', {
                 'query_embedding': query_embedding,
                 'match_repositorio': repo_name,
                 'match_user_id': user_id,
                 'match_count': 1
             }).execute()
-
             if response.data:
                 return response.data[0].get("instrucao_texto")
             return None
@@ -155,7 +130,6 @@ class MetadataService:
             response = self.supabase.rpc('get_distinct_users_for_repo', {
                 'repo_name_filter': repo_name
             }).execute()
-            
             if response.data:
                 return [row['user_id'] for row in response.data]
             return []
