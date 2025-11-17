@@ -1,5 +1,5 @@
 # CÓDIGO COMPLETO E CORRIGIDO PARA: app/services/email_service.py
-# (Este é o conteúdo correto que remove a importação circular)
+# (Usa o SDK oficial do Brevo e corresponde às importações do projeto)
 
 import os
 import sib_api_v3_sdk
@@ -7,82 +7,97 @@ from sib_api_v3_sdk.rest import ApiException
 from typing import Optional
 
 # 1. Configuração do Cliente Brevo (Sendinblue)
-#    Ele deve ler as variáveis de ambiente[cite: 2, 7].
 configuration = sib_api_v3_sdk.Configuration()
 configuration.api_key['api-key'] = os.getenv("BREVO_API_KEY")
 
 api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
 
-SENDER_EMAIL = os.getenv("SENDER_EMAIL", "nao-responda@gitrag.com")
-SENDER_NAME = "GitRAG TCC"
+# 2. Carrega as configurações do remetente
+SENDER_EMAIL = os.getenv("SENDER_EMAIL")
+# (Melhoria: Trazido da Versão 2, para ser configurável)
+SENDER_NAME = os.getenv("SENDER_NAME", "GitRAG TCC") 
 
-def send_report_email(to_email: str, subject: str, html_content: str):
+def _send_email(subject: str, html_content: str, to_email: str):
     """
-    Envia um relatório (gerado pelo worker) por email.
+    Função helper interna para enviar um email transacional.
     """
-    print(f"[EmailService] Enviando relatório para {to_email}...")
-    
-    sender = {"name": SENDER_NAME, "email": SENDER_EMAIL}
-    to = [{"email": to_email}]
-    
-    send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
+    if not BREVO_API_KEY or not SENDER_EMAIL:
+        print("[EmailService] ERRO: BREVO_API_KEY ou SENDER_EMAIL não configurados.")
+        # Lança a exceção para que o worker (RQ) possa registrar a falha do job
+        raise ValueError("BREVO_API_KEY e SENDER_EMAIL são obrigatórios.")
+
+    sender = sib_api_v3_sdk.SendSmtpEmailSender(email=SENDER_EMAIL, name=SENDER_NAME)
+    to = [sib_api_v3_sdk.SendSmtpEmailTo(email=to_email)]
+
+    smtp_email = sib_api_v3_sdk.SendSmtpEmail(
         to=to,
         sender=sender,
         subject=subject,
         html_content=html_content
     )
-    
+
     try:
-        api_response = api_instance.send_transac_email(send_smtp_email)
-        print(f"[EmailService] Resposta da API Brevo: {api_response}")
+        api_response = api_instance.send_transac_email(smtp_email)
+        print(f"[EmailService] Email enviado para {to_email}. Brevo Message ID: {api_response.message_id}")
     except ApiException as e:
-        print(f"[EmailService] ERRO CRÍTICO ao enviar email: {e}")
-        # Lança a exceção para que o worker possa registrar a falha do job
+        print(f"[EmailService] ERRO (Brevo API) ao enviar para {to_email}: {e}")
+        # Propaga o erro para o worker
         raise e
+    except Exception as e:
+        print(f"[EmailService] ERRO (Geral) ao enviar para {to_email}: {e}")
+        raise e
+
+# --- Funções Públicas (Importadas por outros serviços) ---
+
+def send_report_email(to_email: str, subject: str, html_content: str):
+    """
+    Envia um email de relatório (HTML) para o usuário.
+    (Chamado por worker_tasks.py)
+    """
+    print(f"[EmailService] Preparando email de relatório para {to_email}...")
+    _send_email(subject, html_content, to_email)
+
 
 def send_verification_email(to_email: str, token: str):
     """
-    Envia o email de verificação (double opt-in) para ativar agendamentos.
+    Envia o email de verificação (Double Opt-In).
+    (Chamado por scheduler_service.py)
     """
-    print(f"[EmailService] Enviando verificação para {to_email}...")
+    print(f"[EmailService] Preparando email de verificação para {to_email}...")
     
-    # [cite: 2] (APP_URL)
-    app_url = os.getenv("APP_URL", "http://localhost:8000")
-    verification_link = f"{app_url}/api/email/verify?token={token}&email={to_email}"
+    APP_URL = os.getenv("APP_URL", "http://localhost:8000")
+    
+    if "localhost" in APP_URL:
+        print("[EmailService] AVISO: APP_URL aponta para localhost. O link de verificação pode não funcionar.")
+    
+    verification_link = f"{APP_URL}/api/email/verify?token={token}&email={to_email}"
     
     subject = "GitRAG - Ative seus Relatórios Agendados"
     html_content = f"""
     <html>
-    <body style="font-family: Arial, sans-serif; line-height: 1.6;">
+    <body style="font-family: Arial, sans-serif; line-height: 1.6; margin: 20px;">
         <h2>Olá!</h2>
         <p>Recebemos uma solicitação para agendar relatórios do GitRAG para este email.</p>
         <p>Para confirmar e ativar seus agendamentos, por favor, clique no link abaixo:</p>
-        <p style="text-align: center; margin: 25px 0;">
+        <p style="text-align: left; margin: 25px 0;">
             <a href="{verification_link}"
-               style="background-color: #007bff; color: white; padding: 12px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+               style="background-color: #007bff; color: #ffffff; padding: 12px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">
                 Ativar Meus Agendamentos
             </a>
         </p>
         <p>Se você não solicitou isso, pode ignorar este email com segurança.</p>
-        <hr>
-        <p style="font-size: 0.9em; color: #777;">Link (para copiar e colar): {verification_link}</p>
+        <hr style="border: 0; border-top: 1px solid #eee;">
+        <p style="font-size: 0.9em; color: #777;">Se o botão não funcionar, copie e cole este link no seu navegador:<br>
+            <code>{verification_link}</code>
+        </p>
     </body>
     </html>
     """
     
-    sender = {"name": SENDER_NAME, "email": SENDER_EMAIL}
-    to = [{"email": to_email}]
-    
-    send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
-        to=to,
-        sender=sender,
-        subject=subject,
-        html_content=html_content
-    )
-    
     try:
-        api_instance.send_transac_email(send_smtp_email)
-    except ApiException as e:
-        print(f"[EmailService] ERRO ao enviar email de verificação: {e}")
-        # Não lançamos exceção aqui para não travar o fluxo do chat
-        # O usuário pode tentar agendar novamente se não receber
+        _send_email(subject, html_content, to_email)
+    except Exception as e:
+        # Importante: Não lançamos a exceção aqui.
+        # Se o email de verificação falhar, não queremos que a chamada de API
+        # do usuário falhe. Ele pode tentar agendar novamente.
+        print(f"[EmailService] Falha ao tentar enviar verificação: {e}")
