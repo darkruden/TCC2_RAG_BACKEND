@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 
-# Constantes para tipos de arquivos (movidas para dentro da classe ou mantidas globais se necessário)
+# Constantes para tipos de arquivos (movidas para dentro da classe ou mantidas globais se necessário) ts
 TEXT_EXTENSIONS = {
     ".py", ".js", ".mjs", ".ts", ".tsx", ".html", ".css", ".scss", ".json", ".md",
     ".txt", ".rst", ".java", ".c", ".h", ".cpp", ".go", ".php", ".rb", ".swift",
