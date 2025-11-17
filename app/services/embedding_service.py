@@ -5,7 +5,7 @@ import os
 import time
 from openai import OpenAI
 from typing import List, Optional
-import tiktoken # <-- Certifique-se que 'tiktoken' está no seu requirements.txt
+import tiktoken # <-- Certifique-se que 'tiktoken' está no seu requirements.txt asd
 
 class EmbeddingService:
     def __init__(self, model_name: str, max_retries: int = 5, delay: int = 2):
