@@ -54,7 +54,7 @@ class LLMService:
             "type": "function",
             "function": {
                 "name": "call_report_tool",
-                "description": "Usado para pedir um 'relatório' ou 'gráfico' para DOWNLOAD (salvar o arquivo no computador). NÃO usado para email.",
+                "description": "Usado para pedir um 'relatório' ou 'gráfico' para DOWNLOAD IMEDIATO (salvar o arquivo no computador). Nunca use para email.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -70,7 +70,7 @@ class LLMService:
             "type": "function",
             "function": {
                 "name": "call_schedule_tool",
-                "description": "Usado quando o usuário quer ENVIAR um relatório por EMAIL. Pode ser para agora (frequencia: 'once') ou agendado (ex: 'daily', 'weekly').",
+                "description": "Usado quando o usuário quer ENVIAR um relatório por EMAIL (agora ou agendado). Use sempre que 'email', 'agendar' ou 'enviar' for mencionado.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -145,13 +145,13 @@ class LLMService:
         
         # 1. Ajuste do prompt do sistema para o Agente
         system_prompt = f"""
-Você é um Agente de Encadeamento de Tarefas que decomponhe um prompt de usuário em uma lista de etapas (chamadas de ferramenta).
-Analise o prompt do usuário e retorne TODAS as ferramentas necessárias na ordem correta.
+Você é um Agente de Encadeamento de Tarefas que decomponhe um prompt de usuário em uma lista de etapas (chamadas de ferramenta) na ordem correta.
 
-- Regra de Encadeamento: Se o usuário pedir para fazer múltiplas ações, como 'Ingira o repo X e me gere um relatório', retorne as chamadas de ferramenta em ordem sequencial.
-- Ferramentas: USE AS FERRAMENTAS DISPONÍVEIS. Nunca retorne texto se puder retornar uma chamada de ferramenta.
-- Chat Simples: Se o prompt for casual (ex: 'olá', 'obrigado', 'correto'), use call_chat_tool e o conteúdo retornado por essa chamada como a resposta final.
-- Validação: Se um argumento obrigatório estiver faltando (como o nome do repo), você DEVE retornar uma resposta textual para CLARIFICAÇÃO. NUNCA tente inventar o nome do repositório.
+REGRAS CRÍTICAS DE ENCAMINHAMENTO:
+1.  CHAME MÚLTIPLAS FERRAMENTAS: Se o usuário pedir 'Ingira e depois gere relatório', retorne [call_ingest_tool, call_report_tool/schedule] em ordem.
+2.  EMAIL vs DOWNLOAD: Use APENAS call_schedule_tool para qualquer solicitação que mencione 'email', 'agendar' ou 'enviar para mim'. Use APENAS call_report_tool para 'gerar relatório' ou 'download'.
+3.  INGESTÃO PRÉVIA: Se o usuário pedir uma consulta, relatório ou agendamento de um repositório, inclua **call_ingest_tool** como o **PRIMEIRO** passo.
+4.  VALIDE ARGUMENTOS: Se um argumento obrigatório estiver faltando (como o nome do repo), você DEVE retornar uma resposta textual para CLARIFICAÇÃO. NUNCA tente inventar o nome do repositório.
 - Data/Hora: Hoje é {datetime.now(pytz.timezone('America/Sao_Paulo')).strftime('%Y-%m-%d')}. O fuso horário padrão para agendamentos é 'America/Sao_Paulo'.
 """
         
@@ -187,13 +187,11 @@ Analise o prompt do usuário e retorne TODAS as ferramentas necessárias na orde
                         "args": args
                     })
                 except json.JSONDecodeError:
-                    # Se houver erro de parsing, a IA falhou em retornar JSON válido
                     return {"type": "clarify", "response_text": "A IA falhou em formatar a requisição. Por favor, reformule sua solicitação."}
             
             # Validação: Se a IA tentou chamar uma ferramenta mas retornou campos vazios, é falha na intenção.
             for step in steps:
                 if step["intent"] != "call_chat_tool":
-                    # Pega a definição da função para ver quais parâmetros são obrigatórios
                     func_def = self.tool_map.get(step["intent"], {}).get("function", {})
                     required_params = func_def.get("parameters", {}).get("required", [])
                     
@@ -213,8 +211,6 @@ Analise o prompt do usuário e retorne TODAS as ferramentas necessárias na orde
             return {"type": "clarify", "response_text": f"Erro interno ao processar: {e}"}
 
     
-    # ... (O resto da classe LLMService, incluindo as funções generate_response, generate_response_stream, etc., permanece inalterado)
-
     def generate_response(self, query: str, context: List[Dict[str, Any]]) -> Dict[str, Any]:
         if not self.client: raise Exception("LLMService não inicializado.")
         print("[LLMService] Iniciando resposta RAG (NÃO-Streaming)...")

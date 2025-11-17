@@ -258,7 +258,7 @@ async def _route_intent(
         job = target_queue.enqueue(
             func, 
             *params, 
-            depends_on=last_job_id if last_job_id and intent != "call_query_tool" else None,
+            depends_on=last_job_id if last_job_id else None,
             job_timeout=1800
         )
         last_job_id = job.id
