@@ -35,65 +35,82 @@ except Exception as e:
 def fetch_and_queue_jobs():
     """
     Busca no Supabase por agendamentos que precisam rodar e os enfileira.
-    Agora inclui o user_id.
+    Agora inclui o user_id e respeita a coluna 'frequencia'.
     """
     print("[Scheduler] Verificando agendamentos...")
-    
+
     try:
         now_utc = datetime.now(pytz.utc)
-        # CORREÇÃO: Usa a hora e minuto atual, forçando segundos a 00 para bater
-        # com o que está salvo em 'hora_utc'.
-        current_utc_time_str = now_utc.strftime('%H:%M') + ':00' 
-        
+        # Usa hora e minuto atuais (segundos fixos em 00) para bater com 'hora_utc'
+        current_utc_time_str = now_utc.strftime("%H:%M") + ":00"
+
         print(f"[Scheduler] Hora atual (UTC, arredondada ao minuto): {current_utc_time_str}")
 
-        # 1. Seleciona o user_id junto com os outros campos
-        response = supabase.table("agendamentos").select("id, user_email, repositorio, prompt_relatorio, ultimo_envio, user_id") \
-            .eq("ativo", True) \
-            .eq("hora_utc", current_utc_time_str) \
+        response = (
+            supabase.table("agendamentos")
+            .select(
+                "id, user_email, repositorio, prompt_relatorio, ultimo_envio, user_id, frequencia"
+            )
+            .eq("ativo", True)
+            .eq("hora_utc", current_utc_time_str)
             .execute()
+        )
 
         if not response.data:
             print("[Scheduler] Nenhum agendamento encontrado para esta hora.")
             return
-            
+
         print(f"[Scheduler] Encontrados {len(response.data)} agendamentos.")
         jobs_enfileirados = 0
-        
+
         for agendamento in response.data:
+            ag_id = agendamento["id"]
+            freq = agendamento.get("frequencia") or "once"
             ultimo_envio = agendamento.get("ultimo_envio")
-            # Adicionamos a checagem da data aqui para garantir que a comparação seja apenas da data
+
+            # Se já foi enviado alguma vez e a frequência é 'once',
+            # desativa o agendamento e não agenda mais nada.
+            if ultimo_envio and freq == "once":
+                print(f"[Scheduler] Desativando agendamento {ag_id} (frequencia=once, já executado).")
+                supabase.table("agendamentos").update({"ativo": False}).eq("id", ag_id).execute()
+                continue
+
             if ultimo_envio:
-                # Converte o timestamp salvo (que inclui data) para objeto datetime
-                ultimo_envio_dt = datetime.fromisoformat(ultimo_envio.replace('Z', '+00:00')) 
-                # Compara apenas a data
-                if ultimo_envio_dt.date() == now_utc.date():
-                    print(f"[Scheduler] Pulando job {agendamento['id']} (já enviado hoje).")
+                # Converte o timestamp salvo (que inclui data) para datetime
+                ultimo_envio_dt = datetime.fromisoformat(ultimo_envio.replace("Z", "+00:00"))
+
+                # Para frequências diárias, se já enviou hoje, pula
+                if freq == "daily" and ultimo_envio_dt.date() == now_utc.date():
+                    print(f"[Scheduler] Pulando job {ag_id} (daily, já enviado hoje).")
                     continue
-            
+                # Para 'weekly'/'monthly' você pode evoluir depois; por ora,
+                # manda sempre que bater a 'hora_utc'.
+
             user_id = agendamento.get("user_id")
             if not user_id:
-                print(f"[Scheduler] ERRO: Pulando job {agendamento['id']} (user_id está nulo no banco).")
+                print(f"[Scheduler] ERRO: Pulando job {ag_id} (user_id está nulo no banco).")
                 continue
-            
+
             print(f"[Scheduler] Enfileirando relatório (User: {user_id}) para: {agendamento['user_email']}")
-            
+
             q_reports.enqueue(
-                'worker_tasks.enviar_relatorio_agendado', 
-                agendamento['id'],
-                agendamento['user_email'],
-                agendamento['repositorio'],
-                agendamento['prompt_relatorio'],
-                user_id, 
-                job_timeout=1800
+                "worker_tasks.enviar_relatorio_agendado",
+                agendamento["id"],
+                agendamento["user_email"],
+                agendamento["repositorio"],
+                agendamento["prompt_relatorio"],
+                user_id,
+                job_timeout=1800,
             )
-            
+
             jobs_enfileirados += 1
 
         print(f"[Scheduler] {jobs_enfileirados} novos jobs de relatório foram enfileirados.")
 
     except Exception as e:
         print(f"[Scheduler] ERRO ao buscar ou enfileirar jobs: {e}")
+
+
 
 if __name__ == "__main__":
     print("[Scheduler] Executando verificação de agendamentos...")
