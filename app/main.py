@@ -31,7 +31,7 @@ from worker_tasks import (
     process_webhook_payload,
 )
 from app.services.metadata_service import MetadataService
-
+EXTENSION_ORIGIN = "chrome-extension://ajiinnakfafbdkfmodpbmdlbegjmehfh"
 # --- Configuração ---
 try:
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
@@ -91,12 +91,15 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Ajuste depois para domínios específicos, se necessário
+    # Adicionando explicitamente a origem da extensão e a URL do Heroku
+    allow_origins=[
+        EXTENSION_ORIGIN, 
+        "https://meu-tcc-testes-041c1dd46d1d.herokuapp.com" 
+    ], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 # --- Modelos Pydantic ---
 class Message(BaseModel):
     sender: str
