@@ -1,4 +1,5 @@
 # CÓDIGO COMPLETO E CORRIGIDO PARA: app/services/llm_service.py
+# (Implementa o Agente de Múltiplas Etapas com Parallel Tool Calls)
 
 import os
 import json
@@ -80,7 +81,6 @@ class LLMService:
                         "timezone": {"type": "string", "description": "O fuso horário (ex: 'America/Sao_Paulo')."},
                         "user_email": {"type": "string", "description": "O email do destinatário (ex: usuario@gmail.com)."}
                     },
-                    # O e-mail não é obrigatório aqui; a lógica em main.py tratará disso
                     "required": ["repositorio", "prompt_relatorio", "frequencia", "hora", "timezone"], 
                 },
             },
@@ -106,133 +106,17 @@ class LLMService:
             "type": "function",
             "function": {
                 "name": "call_chat_tool",
-                "description": "Usado para bate-papo casual, saudações ou respostas curtas.",
+                "description": "Usado para bate-papo casual, saudações, ou respostas curtas. NENHUM argumento é necessário se for um chat simples.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "prompt": {"type": "string", "description": "O texto do usuário."}
                     },
-                    "required": ["prompt"],
                 },
             },
         }
 
-        self.tool_map = {
-            "INGEST": self.tool_ingest,
-            "QUERY": self.tool_query,
-            "REPORT": self.tool_report,
-            "SCHEDULE": self.tool_schedule,
-            "SAVE_INSTRUCTION": self.tool_save_instruction,
-            "CHAT": self.tool_chat # <-- Adiciona CHAT ao mapa
-        }
-
-    
-    def _get_meta_intent(self, user_query: str) -> Dict[str, Any]:
-        """
-        Etapa 1: O Meta-Roteador.
-        """
-        print(f"[LLMService] Etapa 1: Classificando Meta-Intenção para: '{user_query}'")
-        intent_categories = list(self.tool_map.keys())
-        
-        system_prompt = f"""
-Você é um roteador de API. Sua tarefa é classificar o prompt do usuário em UMA das seguintes categorias:
-{json.dumps(intent_categories)}
-
-- INGEST: Ingerir, indexar ou atualizar um repositório.
-- QUERY: Fazer uma pergunta sobre o código ou dados de um repositório (RAG).
-- REPORT: Gerar um relatório para DOWNLOAD IMEDIATO.
-- SCHEDULE: Enviar um relatório por EMAIL (agora ou no futuro).
-- SAVE_INSTRUCTION: Salvar uma preferência ou instrução para o futuro.
-- CHAT: Bate-papo casual, saudações, ou respostas curtas como 'ok', 'obrigado', 'correto'.
-- CLARIFY: Se a intenção for vaga, ambígua ou não relacionada a nenhuma das anteriores.
-
-Responda APENAS com um objeto JSON no formato: {{"intent": "NOME_DA_INTENCAO"}}
-"""
-        try:
-            response = self.client.chat.completions.create(
-                model=self.routing_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_query}
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.0
-            )
-            
-            result_json = json.loads(response.choices[0].message.content)
-            intent = result_json.get("intent")
-            print(f"[LLMService] Etapa 1: Meta-Intenção decidida: {intent}")
-            
-            if intent in self.tool_map:
-                return {"status": "success", "intent": intent}
-            else:
-                return {"status": "clarify", "response_text": "Desculpe, não entendi sua solicitação. Você pode tentar reformular?"}
-
-        except Exception as e:
-            print(f"[LLMService] Erro CRÍTICO na Etapa 1 (Meta-Roteador): {e}")
-            return {"status": "clarify", "response_text": f"Erro interno no roteador: {e}"}
-
-    def _get_arguments_for_intent(self, user_query: str, intent_name: str) -> Dict[str, Any]:
-        """
-        Etapa 2: O Extrator de Argumentos.
-        """
-        print(f"[LLMService] Etapa 2: Extraindo argumentos para: {intent_name}")
-        
-        tool_definition = self.tool_map.get(intent_name)
-        if not tool_definition:
-            raise ValueError(f"Intenção '{intent_name}' não tem uma ferramenta definida no tool_map.")
-
-        tool_name = tool_definition["function"]["name"] 
-        
-        system_prompt = f"""
-Você é um extrator de argumentos JSON. O usuário quer executar a ação '{intent_name}'.
-Sua tarefa é extrair os parâmetros necessários para a ferramenta '{tool_name}' a partir do prompt do usuário.
-Use 'America/Sao_Paulo' como fuso horário padrão se o usuário mencionar 'Brasília' ou 'horário de São Paulo'.
-Se o usuário disser "agora" ou "imediatamente" para um agendamento, use 'frequencia: "once"' e a hora atual (no fuso correto).
-"""
-        try:
-            response = self.client.chat.completions.create(
-                model=self.routing_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_query}
-                ],
-                tools=[tool_definition],
-                tool_choice={"type": "function", "function": {"name": tool_name}}
-            )
-            
-            tool_calls = response.choices[0].message.tool_calls
-            if not tool_calls:
-                print(f"[LLMService] ERRO na Etapa 2: {tool_name} não foi chamada, mesmo sendo forçada.")
-                raise Exception("Falha ao extrair argumentos.")
-
-            call = tool_calls[0]
-            function_args = json.loads(call.function.arguments)
-            
-            print(f"[LLMService] Etapa 2: Argumentos extraídos: {function_args}")
-            
-            return {
-                "status": "success",
-                "intent_tool_name": tool_name,
-                "args": function_args
-            }
-
-        except Exception as e:
-            print(f"[LLMService] Erro CRÍTICO na Etapa 2 (Extrator de Argumentos): {e}")
-            return {
-                "status": "clarify",
-                "response_text": f"Eu entendi que você quer {intent_name}, mas não consegui extrair os detalhes. Pode, por favor, fornecer o repositório e outros dados?"
-            }
-
-    
-    def get_intent(self, user_query: str) -> Dict[str, Any]:
-        """
-        Orquestra o roteamento. Agora retorna UMA ou MAIS ferramentas.
-        """
-        if not self.client: raise Exception("LLMService não inicializado.")
-
-        # Juntamos todas as ferramentas que queremos que o modelo escolha
-        tools = [
+        self.tools = [
             self.tool_ingest,
             self.tool_query,
             self.tool_report,
@@ -240,16 +124,35 @@ Se o usuário disser "agora" ou "imediatamente" para um agendamento, use 'freque
             self.tool_save_instruction,
             self.tool_chat
         ]
+
+        self.tool_map = {
+            "call_ingest_tool": self.tool_ingest,
+            "call_query_tool": self.tool_query,
+            "call_report_tool": self.tool_report,
+            "call_schedule_tool": self.tool_schedule,
+            "call_save_instruction_tool": self.tool_save_instruction,
+            "call_chat_tool": self.tool_chat
+        }
+
+    
+    def get_intent(self, user_query: str) -> Dict[str, Any]:
+        """
+        Orquestra o roteamento. Agora retorna UMA ou MAIS ferramentas encadeadas.
+        """
+        if not self.client: raise Exception("LLMService não inicializado")
         
+        print(f"[LLMService] Iniciando Agente de Encadeamento para: '{user_query}'")
+        
+        # 1. Ajuste do prompt do sistema para o Agente
         system_prompt = f"""
-Você é um assistente de IA que decompõe um prompt de usuário em uma ou mais etapas (chamadas de ferramenta).
+Você é um Agente de Encadeamento de Tarefas que decomponhe um prompt de usuário em uma lista de etapas (chamadas de ferramenta).
 Analise o prompt do usuário e retorne TODAS as ferramentas necessárias na ordem correta.
 
-- Se o usuário pedir para ingerir E analisar, retorne 'call_ingest_tool' PRIMEIRO, e 'call_report_tool' DEPOIS.
-- Se a intenção for vaga ou casual, use 'call_chat_tool'.
-- Se a intenção for clara, mas faltarem argumentos (como o nome do repo), você DEVE retornar uma intenção "CLARIFY".
-- Hoje é {datetime.now(pytz.timezone('America/Sao_Paulo')).strftime('%Y-%m-%d')}.
-- O fuso horário padrão é 'America/Sao_Paulo'.
+- Regra de Encadeamento: Se o usuário pedir para fazer múltiplas ações, como 'Ingira o repo X e me gere um relatório', retorne as chamadas de ferramenta em ordem sequencial.
+- Ferramentas: USE AS FERRAMENTAS DISPONÍVEIS. Nunca retorne texto se puder retornar uma chamada de ferramenta.
+- Chat Simples: Se o prompt for casual (ex: 'olá', 'obrigado', 'correto'), use call_chat_tool e o conteúdo retornado por essa chamada como a resposta final.
+- Validação: Se um argumento obrigatório estiver faltando (como o nome do repo), você DEVE retornar uma resposta textual para CLARIFICAÇÃO. NUNCA tente inventar o nome do repositório.
+- Data/Hora: Hoje é {datetime.now(pytz.timezone('America/Sao_Paulo')).strftime('%Y-%m-%d')}. O fuso horário padrão para agendamentos é 'America/Sao_Paulo'.
 """
         
         try:
@@ -259,38 +162,60 @@ Analise o prompt do usuário e retorne TODAS as ferramentas necessárias na orde
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_query}
                 ],
-                tools=tools,
-                tool_choice="auto"  # <-- MUDANÇA CRÍTICA: Deixamos a IA decidir
+                tools=self.tools,
+                tool_choice="auto" 
             )
             
             message = response.choices[0].message
             tool_calls = message.tool_calls
 
             if not tool_calls:
-                # A IA decidiu que era um bate-papo simples
+                # A IA decidiu que era um bate-papo simples (retornando apenas texto)
                 chat_text = message.content or "Entendido."
-                return {"intent": "call_chat_tool", "args": {"prompt": chat_text}, "multi_step": False}
+                return {
+                    "type": "simple_chat", 
+                    "response_text": chat_text
+                }
 
-            # Temos uma ou mais chamadas de ferramenta
+            # 2. Processa as chamadas de ferramenta (multi-step ou single-step)
             steps = []
             for call in tool_calls:
-                steps.append({
-                    "intent": call.function.name,
-                    "args": json.loads(call.function.arguments)
-                })
+                try:
+                    args = json.loads(call.function.arguments)
+                    steps.append({
+                        "intent": call.function.name,
+                        "args": args
+                    })
+                except json.JSONDecodeError:
+                    # Se houver erro de parsing, a IA falhou em retornar JSON válido
+                    return {"type": "clarify", "response_text": "A IA falhou em formatar a requisição. Por favor, reformule sua solicitação."}
+            
+            # Validação: Se a IA tentou chamar uma ferramenta mas retornou campos vazios, é falha na intenção.
+            for step in steps:
+                if step["intent"] != "call_chat_tool":
+                    # Pega a definição da função para ver quais parâmetros são obrigatórios
+                    func_def = self.tool_map.get(step["intent"], {}).get("function", {})
+                    required_params = func_def.get("parameters", {}).get("required", [])
+                    
+                    for param in required_params:
+                        if not step["args"].get(param):
+                            return {"type": "clarify", "response_text": f"O campo obrigatório '{param}' está faltando. Por favor, forneça o valor."}
 
             print(f"[LLMService] Intenções detectadas: {len(steps)} etapas.")
-            return {"steps": steps, "multi_step": True}
+            
+            return {
+                "type": "multi_step", 
+                "steps": steps
+            }
 
         except Exception as e:
             print(f"[LLMService] Erro no get_intent multi-step: {e}")
-            return {"intent": "CLARIFY", "response_text": f"Erro interno ao processar: {e}"}
+            return {"type": "clarify", "response_text": f"Erro interno ao processar: {e}"}
+
     
-    
+    # ... (O resto da classe LLMService, incluindo as funções generate_response, generate_response_stream, etc., permanece inalterado)
+
     def generate_response(self, query: str, context: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Gera uma resposta RAG padrão (não-streaming).
-        """
         if not self.client: raise Exception("LLMService não inicializado.")
         print("[LLMService] Iniciando resposta RAG (NÃO-Streaming)...")
         
@@ -326,12 +251,9 @@ Se o contexto não for suficiente, informe que não encontrou informações sobr
         except Exception as e:
             print(f"[LLMService] Erro durante o generate_response: {e}")
             return {"response": f"Erro ao gerar resposta: {e}", "usage": None}
-    
 
+    
     def generate_response_stream(self, query: str, context: List[Dict[str, Any]]) -> Iterator[str]:
-        """
-        Gera uma resposta RAG em streaming.
-        """
         if not self.client: raise Exception("LLMService não inicializado.")
         print("[LLMService] Iniciando resposta em STREAMING...")
         
@@ -365,7 +287,6 @@ Se o contexto não for suficiente, informe que não encontrou informações sobr
 
     
     def generate_analytics_report(self, repo_name: str, user_prompt: str, raw_data: List[Dict[str, Any]]) -> str:
-        # (Função principal do relatório)
         context_json_string = json.dumps(raw_data)
         system_prompt = f"""
 Você é um analista de dados...
@@ -383,7 +304,7 @@ Gere o relatório em um único objeto JSON...
 """
         try:
             response = self.client.chat.completions.create(
-                model=self.generation_model, # Usa o modelo mais forte
+                model=self.generation_model, 
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": final_user_prompt}
@@ -406,7 +327,7 @@ Gere o relatório em um único objeto JSON...
             self.token_usage["completion_tokens"] += usage.completion_tokens
             self.token_usage["total_tokens"] += usage.total_tokens
             
-            return response_content # Retorna a string JSON
+            return response_content 
 
         except Exception as e:
             print(f"[LLMService] Erro ao gerar relatório JSON: {e}")
@@ -417,9 +338,6 @@ Gere o relatório em um único objeto JSON...
 
     
     def generate_simple_response(self, prompt: str) -> str:
-        """
-        Gera uma resposta curta e casual.
-        """
         print(f"[LLMService] Gerando resposta simples para: '{prompt}'")
         
         system_prompt = """
@@ -429,7 +347,7 @@ Se o usuário disser 'obrigado', responda com 'De nada!' ou 'Estou aqui para aju
 """
         try:
             response = self.client.chat.completions.create(
-                model=self.routing_model, # Usa o modelo rápido
+                model=self.routing_model, 
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
@@ -441,18 +359,13 @@ Se o usuário disser 'obrigado', responda com 'De nada!' ou 'Estou aqui para aju
         
         except Exception as e:
             print(f"[LLMService] Erro ao gerar resposta simples: {e}")
-            return "👍" # Fallback
+            return "👍" 
 
     
     def get_token_usage(self) -> Dict[str, int]:
-        """Retorna o uso total de tokens acumulado."""
         return self.token_usage
 
     def _format_context(self, context: List[Dict[str, Any]]) -> str:
-        """
-        Formata os documentos de contexto (RAG) em uma string de texto 
-        para ser usada no prompt da LLM.
-        """
         if not context:
             return "Nenhum contexto encontrado."
         
@@ -474,19 +387,7 @@ Se o usuário disser 'obrigado', responda com 'De nada!' ou 'Estou aqui para aju
         
         return formatted_text
 
-    def _format_requirements_data(self, requirements_data: List[Dict[str, Any]]) -> str:
-        """
-        Formata dados de requisitos (atualmente não utilizado na arquitetura principal).
-        """
-        if not requirements_data:
-            return "Nenhum dado de requisito fornecido."
-        
-        return json.dumps(requirements_data, indent=2, ensure_ascii=False)
-
     def summarize_action_for_confirmation(self, intent_name: str, args: Dict[str, Any]) -> str:
-        """
-        Gera uma pergunta de confirmação humanizada baseada na ação e nos argumentos.
-        """
         print(f"[LLMService] Gerando sumário de confirmação para {intent_name}...")
         
         system_prompt = f"""
@@ -509,7 +410,7 @@ com frequência diária, às 10:00. Isso está correto?
 
         try:
             response = self.client.chat.completions.create(
-                model=self.routing_model, # Usa o modelo rápido
+                model=self.routing_model, 
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": action_summary}
@@ -521,5 +422,10 @@ com frequência diária, às 10:00. Isso está correto?
         
         except Exception as e:
             print(f"[LLMService] Erro ao gerar sumário: {e}")
-            # Fallback
             return f"Ok, devo executar a ação '{intent_name}' com os argumentos: {json.dumps(args)}. Isso está correto?"
+
+    def _format_requirements_data(self, requirements_data: List[Dict[str, Any]]) -> str:
+        if not requirements_data:
+            return "Nenhum dado de requisito fornecido."
+        
+        return json.dumps(requirements_data, indent=2, ensure_ascii=False)
