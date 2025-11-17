@@ -1,12 +1,14 @@
-# CÓDIGO COMPLETO E ATUALIZADO PARA: app/services/scheduler_service.py
-# (Refatorado para Multi-Tenancy com 'user_id')
+# CÓDIGO COMPLETO E CORRIGIDO PARA: app/services/scheduler_service.py
+# (Resolvido o erro de circular import movendo o import da função de email)
 
 import os
 import pytz
 from datetime import datetime
 from supabase import create_client, Client
 from typing import Dict, Any
-from app.services.email_service import send_verification_email
+
+# A linha "from app.services.email_service import send_verification_email"
+# foi REMOVIDA do topo para evitar a circularidade e será importada DENTRO da função 'create_schedule'.
 
 # --- Inicialização do Cliente Supabase ---
 try:
@@ -46,7 +48,7 @@ def _convert_time_to_utc(local_time_str: str, timezone_str: str) -> str:
             return "00:00:00"
 
 def create_schedule(
-    user_id: str, # <-- NOVO
+    user_id: str, 
     user_email: str, 
     repo: str, 
     prompt: str, 
@@ -60,6 +62,9 @@ def create_schedule(
     """
     if not supabase:
         raise Exception("Serviço Supabase não está inicializado.")
+    
+    # CORREÇÃO: Importa a função de email DENTRO DA FUNÇÃO para evitar o loop
+    from app.services.email_service import send_verification_email 
     
     print(f"[SchedulerService] Criando agendamento (User: {user_id}) para {user_email} em {repo}")
     
@@ -83,13 +88,13 @@ def create_schedule(
                 token = email_status["token_verificacao"]
         else:
             print(f"[SchedulerService] Email {user_email} é novo. Criando registro de verificação.")
-            new_email_entry = supabase.table("emails_verificados").insert({"email": user_email}) \
-                .execute()
+            # Note: O token é gerado automaticamente pelo Supabase no momento da inserção
+            new_email_entry = supabase.table("emails_verificados").insert({"email": user_email}).execute()
             token = new_email_entry.data[0]["token_verificacao"]
 
         # 3. Salva o novo agendamento no banco
         novo_agendamento = {
-            "user_id": user_id, # <-- ADICIONADO
+            "user_id": user_id, 
             "user_email": user_email,
             "repositorio": repo,
             "prompt_relatorio": prompt,
@@ -116,7 +121,6 @@ def create_schedule(
 def verify_email_token(email: str, token: str) -> bool:
     """
     Verifica um token de email e ativa os agendamentos pendentes.
-    (Esta função permanece a mesma, pois é baseada em email, não em user_id).
     """
     if not supabase:
         raise Exception("Serviço Supabase não está inicializado.")
