@@ -16,6 +16,7 @@ import hashlib
 import json
 import hmac
 import uuid # Para gerar a API key
+import requests # <-- CORREÇÃO AQUI
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 
@@ -95,10 +96,9 @@ class Message(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: List[Message]
-    # user_email não é mais necessário aqui, será pego do token
 
 class GoogleLoginRequest(BaseModel):
-    credential: str # O token JWT que o Google fornece
+    credential: str # O token JWT (ou Access Token) que o Google fornece
 
 class AuthResponse(BaseModel):
     api_key: str
@@ -126,29 +126,21 @@ async def verificar_token(x_api_key: str = Header(...)) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail="Serviço de DB não inicializado.")
     
     try:
-        # --- INÍCIO DA ATUALIZAÇÃO ---
-        # Remove .single() para evitar o erro PGRST116
         response = supabase_client.table("usuarios").select("*").eq("api_key", x_api_key).execute()
         
-        # Verifica manualmente se encontramos 0 ou 1 usuário
         if not response.data or len(response.data) == 0:
             print("[Auth] Token de API não encontrado (0 linhas).")
             raise HTTPException(status_code=401, detail="Token de API inválido")
-        # --- FIM DA ATUALIZAÇÃO ---
 
-        # Retorna o usuário completo (incluindo 'id' e 'email')
         return response.data[0]
         
     except Exception as e:
-        # Captura a exceção HTTP que acabamos de lançar
         if isinstance(e, HTTPException):
             raise e
-        
         print(f"[Auth] Erro ao verificar token: {e}")
         raise HTTPException(status_code=401, detail="Token de API inválido ou erro na consulta.")
 
 async def verify_github_signature(request: Request, x_hub_signature_256: str = Header(...)):
-    # ... (Sem mudanças aqui) ...
     secret = os.getenv("GITHUB_WEBHOOK_SECRET")
     if not secret:
         raise HTTPException(status_code=500, detail="O servidor não está configurado para webhooks.")
@@ -170,8 +162,8 @@ CONFIRMATION_WORDS = ["sim", "s", "yes", "y", "correto", "confirmo", "pode", "is
 async def _route_intent(
     intent: str, 
     args: Dict[str, Any], 
-    user_id: str, # <-- MUDANÇA: Recebe 'user_id'
-    user_email: str, # <-- MUDANÇA: Recebe 'user_email'
+    user_id: str,
+    user_email: str,
     last_user_prompt: str = ""
 ) -> Dict[str, Any]:
     
@@ -213,12 +205,11 @@ async def _route_intent(
         tz = args.get("timezone")
         email_from_args = args.get("user_email")
         
-        final_email = email_from_args or user_email # Usa o email verificado do usuário como fallback
+        final_email = email_from_args or user_email
 
         if not final_email: 
             return {"response_type": "clarification", "message": "Não consegui identificar seu email para o agendamento.", "job_id": None}
 
-        # 4. LÓGICA DE ENVIO IMEDIATO (freq == "once")
         if freq == "once":
             print(f"[ChatRouter] Envio imediato (once) detectado. Enfileirando job de email para {final_email}.")
             job = q_reports.enqueue(
@@ -232,7 +223,6 @@ async def _route_intent(
             )
             return {"response_type": "answer", "message": f"Ok! Estou preparando seu relatório para `{repo}` e o enviarei para `{final_email}` em breve.", "job_id": job.id}
 
-        # 5. LÓGICA DE AGENDAMENTO (daily, weekly, etc.)
         else:
             confirmation_args = {
                 "repositorio": repo, "prompt_relatorio": prompt,
@@ -310,7 +300,10 @@ async def google_login(request: GoogleLoginRequest):
         userinfo_url = "https://www.googleapis.com/oauth2/v3/userinfo"
         headers = {"Authorization": f"Bearer {access_token}"}
         
+        # --- CORREÇÃO AQUI ---
+        # Usar a biblioteca 'requests' que importamos
         response = requests.get(userinfo_url, headers=headers)
+        # --- FIM DA CORREÇÃO ---
         
         if response.status_code != 200:
             print(f"[Auth] Erro de verificação de token: {response.text}")
@@ -345,13 +338,6 @@ async def google_login(request: GoogleLoginRequest):
             
             user = insert_response.data[0]
             return {"api_key": user['api_key'], "email": user['email'], "nome": user['nome']}
-
-    except ValueError as e:
-        print(f"[Auth] Erro de verificação de token: {e}")
-        raise HTTPException(status_code=401, detail=f"Token Google inválido: {e}")
-    except Exception as e:
-        print(f"[Auth] Erro crítico no login: {e}")
-        raise HTTPException(status_code=500, detail=f"Erro interno no servidor: {e}")
 
     except ValueError as e:
         print(f"[Auth] Erro de verificação de token: {e}")
@@ -487,29 +473,55 @@ async def handle_chat_stream(request: StreamRequest, current_user: Dict[str, Any
         return StreamingResponse((f"Erro: {e}"), media_type="text/plain")
 
 # --- Endpoints de Suporte (Webhook, Verify, Status) ---
-# (Nota: Idealmente, /api/ingest/status e /api/relatorio/status
-# também deveriam verificar o user_id, mas deixaremos isso por enquanto
-# para focar no fluxo principal)
-
 @app.post("/api/webhook/github")
 async def handle_github_webhook(request: Request, x_github_event: str = Header(...), payload_bytes: bytes = Depends(verify_github_signature)):
-    # ... (Sem mudanças, pois este endpoint é chamado pelo GitHub, não por um usuário) ...
+    if not q_ingest: raise HTTPException(status_code=500, detail="Serviço de Fila (Redis) não inicializado.")
+    try: payload = json.loads(payload_bytes.decode('utf-8'))
+    except json.JSONDecodeError: raise HTTPException(status_code=400, detail="Payload do webhook mal formatado.")
+    print(f"[Webhook] Recebido evento '{x_github_event}' validado.")
     if x_github_event in ['push', 'issues', 'pull_request']:
-        # IMPORTANTE: Webhooks não estão vinculados a um usuário.
-        # Precisaríamos de uma lógica complexa para mapear o repositório
-        # ao usuário que o ingeriu. Por enquanto, o webhook processa
-        # para quem tiver ingerido o repositório.
-        pass 
-    pass
+        try:
+            job = q_ingest.enqueue('worker_tasks.process_webhook_payload', x_github_event, payload, job_timeout=600)
+            print(f"[Webhook] Evento '{x_github_event}' enfileirado. Job ID: {job.id}")
+        except Exception as e:
+            print(f"[Webhook] ERRO ao enfileirar job: {e}")
+            raise HTTPException(status_code=500, detail="Erro ao enfileirar tarefa do webhook.")
+        return {"status": "success", "message": f"Evento '{x_github_event}' recebido e enfileirado."}
+    else:
+        return {"status": "ignored", "message": f"Evento '{x_github_event}' não é processado."}
 
 @app.get("/api/email/verify", response_class=HTMLResponse)
 async def verify_email(token: str, email: str):
-    # ... (Sem mudanças, esta verificação de email é genérica) ...
-    pass
+    try:
+        sucesso = verify_email_token(email, token)
+        if sucesso:
+            return """
+            <html><head><title>Email Verificado</title><style>
+            body { font-family: Arial, sans-serif; display: grid; place-items: center; min-height: 90vh; background-color: #f4f4f4; }
+            div { text-align: center; padding: 40px; background-color: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+            h1 { color: #28a745; }
+            </style></head><body><div>
+            <h1>✅ Email Verificado com Sucesso!</h1>
+            <p>Seus relatórios agendados estão ativados. Você já pode fechar esta aba.</p>
+            </div></body></html>
+            """
+        else:
+            return """
+            <html><head><title>Falha na Verificação</title><style>
+            body { font-family: Arial, sans-serif; display: grid; place-items: center; min-height: 90vh; background-color: #f4f4f4; }
+            div { text-align: center; padding: 40px; background-color: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+            h1 { color: #dc3545; }
+            </style></head><body><div>
+            <h1>❌ Falha na Verificação</h1>
+            <p>O link de verificação é inválido ou expirou.</p>
+            <p>Por favor, tente agendar o relatório novamente para receber um novo link.</p>
+            </div></body></html>
+            """
+    except Exception as e:
+        return HTMLResponse(content=f"<h1>Erro 500</h1><p>Ocorreu um erro no servidor.</p>", status_code=500)
 
 @app.get("/api/ingest/status/{job_id}", dependencies=[Depends(verificar_token)])
 async def get_job_status(job_id: str, current_user: Dict[str, Any] = Depends(verificar_token)):
-    # (Idealmente, verificaríamos se job.meta['user_id'] == current_user['id'])
     if not q_ingest: raise HTTPException(status_code=500, detail="Serviço de Fila (Redis) não inicializado.")
     try: job = q_ingest.fetch_job(job_id)
     except Exception as e: raise HTTPException(status_code=500, detail=f"Erro ao conectar com a fila: {e}")
@@ -532,7 +544,6 @@ async def get_report_job_status(job_id: str, current_user: Dict[str, Any] = Depe
 
 @app.get("/api/relatorio/download/{filename}", dependencies=[Depends(verificar_token)])
 async def download_report(filename: str, current_user: Dict[str, Any] = Depends(verificar_token)):
-    # (Idealmente, verificaríamos se o usuário tem permissão para este arquivo)
     SUPABASE_BUCKET_NAME = "reports"
     try:
         if not supabase_client: raise Exception("Cliente Supabase não inicializado")
