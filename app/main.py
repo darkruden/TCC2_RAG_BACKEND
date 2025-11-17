@@ -449,7 +449,7 @@ async def handle_chat(request: ChatRequest, current_user: Dict[str, Any] = Depen
         print(f"[ChatRouter] Erro CRÍTICO no /api/chat: {e}")
         return {"response_type": "error", "message": f"Erro: {e}", "job_id": None}
 
-# --- ROTA DE CHAT COM ARQUIVO ---
+# --- ROTA DE CHAT COM ARQUIVO --- apenas registrando o sucesso
 @app.post("/api/chat_file", response_model=ChatResponse, dependencies=[Depends(verificar_token)])
 async def handle_chat_with_file(
     prompt: str = Form(...), 
