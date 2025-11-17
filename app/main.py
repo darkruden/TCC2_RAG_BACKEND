@@ -553,6 +553,65 @@ async def download_report(filename: str, current_user: Dict[str, Any] = Depends(
         print(f"[API-DOWNLOAD] Erro ao baixar o arquivo: {repr(e)}")
         raise HTTPException(status_code=500, detail=f"Erro ao processar download: {repr(e)}")
 
+@app.get("/api/schedules", response_model=List[Dict[str, Any]], dependencies=[Depends(verificar_token)])
+async def get_schedules(current_user: Dict[str, Any] = Depends(verificar_token)):
+    """
+    Busca todos os agendamentos de relatórios ativos para o usuário logado.
+    """
+    if not supabase_client:
+        raise HTTPException(status_code=500, detail="Serviço de DB não inicializado.")
+    
+    user_id = current_user['id']
+    print(f"[API] Buscando agendamentos para User: {user_id}")
+    
+    try:
+        response = supabase_client.table("agendamentos") \
+            .select("id, repositorio, prompt_relatorio, frequencia, hora_utc, timezone, ultimo_envio") \
+            .eq("user_id", user_id) \
+            .eq("ativo", True) \
+            .order("repositorio", desc=False) \
+            .execute()
+        
+        return response.data
+    
+    except Exception as e:
+        print(f"[API] Erro ao buscar agendamentos: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar agendamentos: {e}")
+
+@app.delete("/api/schedules/{schedule_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(verificar_token)])
+async def delete_schedule(schedule_id: str, current_user: Dict[str, Any] = Depends(verificar_token)):
+    """
+    Deleta (desativa) um agendamento de relatório.
+    """
+    if not supabase_client:
+        raise HTTPException(status_code=500, detail="Serviço de DB não inicializado.")
+        
+    user_id = current_user['id']
+    print(f"[API] Deletando agendamento {schedule_id} para User: {user_id}")
+
+    try:
+        # Importante: Deletamos apenas se o 'user_id' bater,
+        # para que um usuário não possa deletar o agendamento de outro.
+        response = supabase_client.table("agendamentos") \
+            .delete() \
+            .eq("id", schedule_id) \
+            .eq("user_id", user_id) \
+            .execute()
+            
+        if not response.data:
+            # Isso acontece se o ID não existe OU se o user_id não bateu
+            print(f"[API] Falha ao deletar: Agendamento {schedule_id} não encontrado ou não pertence ao usuário {user_id}.")
+            raise HTTPException(status_code=404, detail="Agendamento não encontrado ou não autorizado.")
+        
+        print(f"[API] Agendamento {schedule_id} deletado com sucesso.")
+        return
+    
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        print(f"[API] Erro ao deletar agendamento: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao deletar agendamento: {e}")
+
 # Ponto de entrada (corpo completo)
 if __name__ == "__main__":
     import uvicorn
