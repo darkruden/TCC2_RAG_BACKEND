@@ -300,10 +300,7 @@ async def google_login(request: GoogleLoginRequest):
         userinfo_url = "https://www.googleapis.com/oauth2/v3/userinfo"
         headers = {"Authorization": f"Bearer {access_token}"}
         
-        # --- CORREÇÃO AQUI ---
-        # Usar a biblioteca 'requests' que importamos
         response = requests.get(userinfo_url, headers=headers)
-        # --- FIM DA CORREÇÃO ---
         
         if response.status_code != 200:
             print(f"[Auth] Erro de verificação de token: {response.text}")
@@ -329,12 +326,16 @@ async def google_login(request: GoogleLoginRequest):
             print(f"[Auth] Novo usuário detectado: {email}")
             new_api_key = str(uuid.uuid4())
             
-            insert_response = supabase_client.table("usuarios").insert({
-                "google_id": google_id,
-                "email": email,
-                "nome": nome,
-                "api_key": new_api_key
-            }).select("*").execute()
+            # --- INÍCIO DA CORREÇÃO (Adicionados colchetes []) ---
+            insert_response = supabase_client.table("usuarios").insert([
+                {
+                    "google_id": google_id,
+                    "email": email,
+                    "nome": nome,
+                    "api_key": new_api_key
+                }
+            ]).select("*").execute()
+            # --- FIM DA CORREÇÃO ---
             
             user = insert_response.data[0]
             return {"api_key": user['api_key'], "email": user['email'], "nome": user['nome']}
