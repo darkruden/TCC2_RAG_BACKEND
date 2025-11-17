@@ -1,5 +1,5 @@
 # CÓDIGO COMPLETO E CORRIGIDO PARA: worker_tasks.py
-# (Adiciona 'import io' e modifica 'enviar_relatorio_agendado' para salvar e retornar o filename)
+# (Corrige o bug 'download/null')
 
 import os
 import redis
@@ -7,8 +7,8 @@ from rq import Queue
 import time
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
-import io # <-- ADIÇÃO NECESSÁRIA
-import traceback # <-- Importação para logs de erro
+import io 
+import traceback 
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -51,20 +51,19 @@ except Exception as e:
     print(f"[WorkerTasks] ERRO CRÍTICO: Não foi possível conectar ao Supabase. {e}")
     supabase_client = None
 
-# --- Inicialização de Serviços ---
+# --- Inicialização de Serviços (Arquitetura de Injeção de Dependência) ---
 try:
     llm_service = LLMService()
     
-    # (Corrigido para usar a variável de ambiente correta)
     embedding_service = EmbeddingService(
         model_name=os.getenv("EMBEDDING_MODEL_NAME", "text-embedding-3-small"), 
         max_retries=3, 
         delay=5
     )
-    metadata_service = MetadataService(embedding_service=embedding_service) # Injeta a dependência
+    metadata_service = MetadataService(embedding_service=embedding_service) 
     github_service = GithubService(os.getenv("GITHUB_TOKEN"))
     ingest_service = IngestService(github_service, metadata_service, embedding_service)
-    report_service = ReportService(llm_service, metadata_service) # O metadata_service já tem o embedding_service
+    report_service = ReportService(llm_service, metadata_service)
     
     print("[WorkerTasks] Todos os serviços (LLM, Embedding, Metadata, GitHub, Ingest, Report) inicializados.")
 except Exception as e:
@@ -126,7 +125,6 @@ def processar_e_salvar_relatorio(user_id: str, repo_url: str, prompt: str, forma
     if not report_service:
          raise RuntimeError("ReportService não inicializado.")
 
-    # A função gerar_e_salvar_relatorio já faz o upload
     filename = report_service.gerar_e_salvar_relatorio(
         user_id,
         repo_url,
@@ -141,13 +139,13 @@ def save_instruction(user_id: str, repo_url: str, instrucao: str):
     Tarefa para salvar uma instrução de RAG.
     """
     return _run_with_logs(
-        ingest_service.save_instruction_document, # Corrigido para chamar o método real
+        ingest_service.save_instruction_document,
         user_id,
         repo_url,
         instrucao
     )
 
-# --- INÍCIO DA CORREÇÃO ---
+# --- INÍCIO DA CORREÇÃO (BUG 'download/null') ---
 def enviar_relatorio_agendado(
     schedule_id: str, 
     to_email: str, 
@@ -194,7 +192,7 @@ def enviar_relatorio_agendado(
     
     print(f"[WorkerTask] Relatório (agendado/once) para {to_email} concluído.")
     
-    # 4. Retorna o filename
+    # 4. Retorna o filename (Esta é a correção para o bug 'download/null')
     return filename
 # --- FIM DA CORREÇÃO ---
 

@@ -7,14 +7,9 @@ from sib_api_v3_sdk.rest import ApiException
 from typing import Optional
 
 # 1. Configuração do Cliente Brevo (Sendinblue)
-
-# --- INÍCIO DA CORREÇÃO ---
-# Carrega a chave da API para uma variável global
 BREVO_API_KEY = os.getenv("BREVO_API_KEY") 
-# --- FIM DA CORREÇÃO ---
 
 configuration = sib_api_v3_sdk.Configuration()
-# Agora usa a variável global para configurar a API
 configuration.api_key['api-key'] = BREVO_API_KEY
 
 api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
@@ -27,11 +22,8 @@ def _send_email(subject: str, html_content: str, to_email: str):
     """
     Função helper interna para enviar um email transacional.
     """
-    # Esta verificação agora funcionará corretamente, pois
-    # BREVO_API_KEY e SENDER_EMAIL existem no escopo global.
     if not BREVO_API_KEY or not SENDER_EMAIL:
         print("[EmailService] ERRO: BREVO_API_KEY ou SENDER_EMAIL não configurados.")
-        # Lança a exceção para que o worker (RQ) possa registrar a falha do job
         raise ValueError("BREVO_API_KEY e SENDER_EMAIL são obrigatórios.")
 
     sender = sib_api_v3_sdk.SendSmtpEmailSender(email=SENDER_EMAIL, name=SENDER_NAME)
@@ -49,18 +41,14 @@ def _send_email(subject: str, html_content: str, to_email: str):
         print(f"[EmailService] Email enviado para {to_email}. Brevo Message ID: {api_response.message_id}")
     except ApiException as e:
         print(f"[EmailService] ERRO (Brevo API) ao enviar para {to_email}: {e}")
-        # Propaga o erro para o worker
         raise e
     except Exception as e:
         print(f"[EmailService] ERRO (Geral) ao enviar para {to_email}: {e}")
         raise e
 
-# --- Funções Públicas (Importadas por outros serviços) ---
-
 def send_report_email(to_email: str, subject: str, html_content: str):
     """
     Envia um email de relatório (HTML) para o usuário.
-    (Chamado por worker_tasks.py)
     """
     print(f"[EmailService] Preparando email de relatório para {to_email}...")
     _send_email(subject, html_content, to_email)
@@ -69,7 +57,6 @@ def send_report_email(to_email: str, subject: str, html_content: str):
 def send_verification_email(to_email: str, token: str):
     """
     Envia o email de verificação (Double Opt-In).
-    (Chamado por scheduler_service.py)
     """
     print(f"[EmailService] Preparando email de verificação para {to_email}...")
     
@@ -105,7 +92,4 @@ def send_verification_email(to_email: str, token: str):
     try:
         _send_email(subject, html_content, to_email)
     except Exception as e:
-        # Importante: Não lançamos a exceção aqui.
-        # Se o email de verificação falhar, não queremos que a chamada de API
-        # do usuário falhe. Ele pode tentar agendar novamente.
         print(f"[EmailService] Falha ao tentar enviar verificação: {e}")
