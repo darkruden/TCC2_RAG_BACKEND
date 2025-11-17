@@ -30,7 +30,7 @@ from worker_tasks import (
     enviar_relatorio_agendado,
     process_webhook_payload,
 )
-from app.services.metadata_service import MetadataService
+
 
 # --- Configuração ---
 try:
@@ -67,27 +67,13 @@ except Exception as e:
     print(f"[Main] ERRO CRÍTICO ao inicializar Supabase: {e}")
     supabase_client = None
 
+# --- Inicialização de Serviços ---
 try:
-    # Importa os serviços que faltavam
-    from app.services.embedding_service import EmbeddingService
-    from app.services.metadata_service import MetadataService
-    
-    # Inicializa na ordem correta
     llm_service = LLMService()
-    
-    embedding_service = EmbeddingService(
-        model_name=os.getenv("EMBEDDING_MODEL_NAME", "text-embedding-3-small")
-    )
-    # Injeta a dependência
-    metadata_service = MetadataService(embedding_service=embedding_service)
-    
-    print("[Main] LLMService, EmbeddingService e MetadataService inicializados.")
+    print("[Main] LLMService (para roteamento) inicializado.")
 except Exception as e:
-    print(f"[Main] ERRO: Falha ao inicializar serviços (LLM, Embedding, Metadata): {e}")
-    traceback.print_exc() # Adiciona isso para ver o erro completo
+    print(f"[Main] ERRO: Falha ao inicializar LLMService: {e}")
     llm_service = None
-    metadata_service = None
-    embedding_service = None # Garante que ele fique nulo se falhar
 
 # --- NOVO: Configuração de Auth ---
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
@@ -220,7 +206,10 @@ async def _route_intent(
     Converte a saída do LLM (intenção + steps) em chamadas concretas
     para as filas do RQ ou para o serviço de agendamento.
     """
-    if not conn or not q_ingest or not q_reports or not llm_service or not metadata_service:
+    # --- ALTERAÇÃO AQUI ---
+    # Removemos 'metadata_service' da checagem.
+    if not conn or not q_ingest or not q_reports or not llm_service:
+    # --- FIM DA ALTERAÇÃO ---
         return {
             "response_type": "error",
             "message": "Erro de servidor: O serviço de fila (Redis) ou LLM está indisponível.",
@@ -257,18 +246,13 @@ async def _route_intent(
     is_confirmation = last_user_prompt.strip().lower() in CONFIRMATION_WORDS
     is_multi_step = len(steps) > 1
 
-    # --- INÍCIO DA CORREÇÃO DE LÓGICA DE CONFIRMAÇÃO ---
-    # Precisamos verificar se *qualquer* etapa é um agendamento recorrente
     is_recurring_schedule = any(
         s.get("intent") == "call_schedule_tool" and s.get("args", {}).get("frequencia") not in ["once", None]
         for s in steps
     )
-    # --- FIM DA CORREÇÃO ---
 
-    # Planos complexos ou que envolvem agendamento pedem confirmação explícita
     if (is_multi_step or is_recurring_schedule) and not is_confirmation:
         
-        # A. AGENDAMENTO RECORRENTE (Single-step):
         if is_recurring_schedule and not is_multi_step:
             first_sched = [s for s in steps if s["intent"] == "call_schedule_tool"][0]
             confirmation_text = llm_service.summarize_action_for_confirmation(
@@ -280,7 +264,6 @@ async def _route_intent(
                 "job_id": None,
             }
         
-        # B. MULTI-STEP:
         else:
             confirmation_text = llm_service.summarize_plan_for_confirmation(
                 steps, user_email
@@ -296,7 +279,6 @@ async def _route_intent(
 
     last_job_id: Optional[str] = None
     final_message = "Tarefas enfileiradas."
-    # Dicionário para rastrear a mensagem do último job *enfileirado*
     job_messages = {}
 
     for i, step in enumerate(steps):
@@ -306,14 +288,12 @@ async def _route_intent(
 
         print(f"--- Enfileirando Etapa {i+1}/{len(steps)}: {intent} ---")
 
-        # Reseta as variáveis de tarefa do loop
         func = None
         params = []
         target_queue = None
 
-        # 3.1) Consulta RAG (streaming) – não vira job de worker
         if intent == "call_query_tool":
-            if i == len(steps) - 1: # Só executa se for a última etapa
+            if i == len(steps) - 1:
                 payload = {
                     "repositorio": repo,
                     "prompt_usuario": args.get("prompt_usuario"),
@@ -325,7 +305,6 @@ async def _route_intent(
                 }
             continue
 
-        # 3.2) INGEST, REPORT, SAVE_INSTRUCTION
         elif intent == "call_ingest_tool":
             func = ingest_repo
             params = [user_id, repo, 50, 20, 30]
@@ -344,8 +323,6 @@ async def _route_intent(
             target_queue = q_ingest
             final_message = f"Instrução para {repo} salva."
 
-        # --- INÍCIO DA CORREÇÃO DO BUG DE ROTEAMENTO ---
-        # 3.3) Agendamento / envio por e-mail
         elif intent == "call_schedule_tool":
             freq = args.get("frequencia")
             email_to_use = args.get("user_email") or user_email
@@ -355,7 +332,6 @@ async def _route_intent(
             if not repo or not args.get("prompt_relatorio") or not freq:
                  return { "response_type": "clarification", "message": "Para agendar, preciso do repositório, do prompt e da frequência (once, daily, etc.).", "job_id": None }
 
-            # SE FOR 'ONCE' (envio imediato/encadeado)
             if freq == "once":
                 print(f"[ChatRouter] Roteando {intent} (once) para a fila RQ.")
                 func = enviar_relatorio_agendado
@@ -363,7 +339,6 @@ async def _route_intent(
                 target_queue = q_reports
                 final_message = f"Relatório para {repo} será enviado para {email_to_use} assim que as etapas anteriores concluírem."
             
-            # SE FOR RECORRENTE (daily, weekly, etc.)
             else:
                 if not hora or not tz:
                     return { "response_type": "clarification", "message": f"Para agendamentos '{freq}', preciso também da hora (HH:MM) e timezone.", "job_id": None }
@@ -379,21 +354,16 @@ async def _route_intent(
                     tz=tz,
                 )
                 
-                # Se este for o último step, retornamos a msg do agendamento
                 if i == len(steps) - 1 and not last_job_id:
                      return { "response_type": "answer", "message": msg, "job_id": None }
                 
-                # Se não for o último step, apenas continuamos
-                # (Não há job a ser enfileirado)
                 final_message = msg
                 continue
-        # --- FIM DA CORREÇÃO DO BUG DE ROTEAMENTO ---
 
         else:
             print(f"[ChatRouter] AVISO: Intenção {intent} não é tratada. Pulando.")
             continue
 
-        # 3.4) Enfileira o job (apenas se 'func' foi definido)
         if func and target_queue:
             job = target_queue.enqueue(
                 func,
@@ -404,19 +374,16 @@ async def _route_intent(
             last_job_id = job.id
             job_messages[last_job_id] = final_message
     
-    # 4) Resposta final para o frontend
     if last_job_id:
-        # Responde com a mensagem do ÚLTIMO job enfileirado
         return {
             "response_type": "job_enqueued",
             "message": job_messages.get(last_job_id, "Tarefas enfileiradas."),
             "job_id": last_job_id,
         }
     
-    # Caso nenhum job tenha sido enfileirado (ex: só agendamento recorrente)
     return {
         "response_type": "answer",
-        "message": final_message, # (será a msg do create_schedule, se foi o caso)
+        "message": final_message,
         "job_id": None,
     }
 
