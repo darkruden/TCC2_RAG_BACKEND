@@ -149,13 +149,13 @@ class LLMService:
                             "type": "string",
                             "enum": ["once", "daily", "weekly", "monthly"],
                             "description": (
-                                "A frequência. Use 'once' para envio imediato. "
+                                "A frequência. Use 'once' para um envio único (agendado para um horário), "
                                 "'daily' para diário, 'weekly' para semanal, 'monthly' para mensal."
                             )
                         },
                         "hora": {
                             "type": "string",
-                            "description": "A hora no formato HH:MM (24h)."
+                            "description": "A hora local desejada pelo usuário, no formato HH:MM (24h)."
                         },
                         "timezone": {
                             "type": "string",
@@ -254,7 +254,7 @@ class LLMService:
         
         print(f"[LLMService] Iniciando Agente de Encadeamento para: '{user_query}'")
         
-        # 1. Ajuste do prompt do sistema para o Agente
+        # 1. Prompt do sistema para o Agente
         system_prompt = f"""
 Você é o Orquestrador de Tarefas da plataforma GitRAG, uma solução de Engenharia de Software
 que utiliza IA + RAG para rastreabilidade e análise de requisitos em repositórios GitHub.
@@ -280,6 +280,7 @@ CONTEXTUALIZAÇÃO DA PLATAFORMA:
   - call_chat_tool        → conversa casual, onboarding e explicações que não exigem dados do repo.
 
 REGRAS CRÍTICAS DE ENCAMINHAMENTO:
+
 1. CHAME MÚLTIPLAS FERRAMENTAS QUANDO NECESSÁRIO:
    - Se o usuário pedir 'ingira X e depois gere relatório', retorne steps em ordem:
      [call_ingest_tool, call_report_tool].
@@ -288,21 +289,47 @@ REGRAS CRÍTICAS DE ENCAMINHAMENTO:
    - Se o usuário pedir 'ingira X, salve um template de relatório e agende por email', retorne:
      [call_ingest_tool, call_save_instruction_tool, call_schedule_tool].
 
-2. EMAIL vs DOWNLOAD:
+2. FLUXOS COMPOSTOS COM INGESTÃO, RELATÓRIO E EMAIL (ORDEM OBRIGATÓRIA):
+   SEMPRE que o usuário mencionar, na mesma solicitação, duas ou mais destas ações:
+   - ingerir (ingestão, atualizar índice, sincronizar repositório),
+   - gerar relatório (relatório, gráfico, exportar, resumo da sprint, etc.),
+   - enviar por email (email, e-mail, mandar para mim, agendar envio, alerta por email),
+   você DEVE seguir estritamente a seguinte ordem de steps:
+
+   a) Se o pedido envolver ingestão + relatório + email:
+      → [call_ingest_tool, call_report_tool, call_schedule_tool]
+
+   b) Se envolver ingestão + email (sem relatório explícito):
+      → [call_ingest_tool, call_schedule_tool]
+
+   c) Se envolver relatório + email, mesmo sem citar ingestão explicitamente:
+      → [call_ingest_tool, call_report_tool, call_schedule_tool]
+      (ou seja, inclua a ingestão antes, para garantir que o índice esteja atualizado).
+
+   d) Se envolver apenas ingestão + consulta (sem email):
+      → [call_ingest_tool, call_query_tool]
+
+   Ao montar os argumentos:
+   - Reaproveite o conteúdo descritivo do pedido do usuário para preencher tanto
+     'prompt_usuario' (call_report_tool/call_query_tool) quanto 'prompt_relatorio' (call_schedule_tool),
+     adaptando levemente o texto se necessário, mas mantendo o MESMO objetivo analítico.
+
+3. EMAIL vs DOWNLOAD:
    - Use APENAS call_schedule_tool para qualquer solicitação que mencione explicitamente:
      'email', 'e-mail', 'agendar', 'todo dia', 'toda semana', 'todo mês', 'alerta',
      'monitorar', 'mandar para mim por email'.
    - Use APENAS call_report_tool quando o usuário quiser gerar algo para download imediato:
      'gerar relatório', 'gerar gráfico', 'exportar', 'baixar', 'download', 'PDF', 'planilha', etc.
 
-3. INGESTÃO PRÉVIA:
+4. INGESTÃO PRÉVIA (MESMO QUANDO NÃO FOR CITADA):
    - Se o usuário pedir consulta (call_query_tool), relatório (call_report_tool) ou agendamento
-     (call_schedule_tool) para um repositório, inclua **call_ingest_tool** como o PRIMEIRO passo,
-     exceto se o usuário deixar claro que o repositório já foi ingerido e que ele quer apenas
-     'reusar' o índice existente.
+     (call_schedule_tool) para um repositório e não ficar explícito que o índice já está atualizado,
+     inclua **call_ingest_tool** como o PRIMEIRO passo.
+   - Exceção: se o usuário disser claramente algo como 'sem precisar reinvestir/ingerir de novo',
+     você pode omitir a ingestão e chamar apenas as ferramentas de consulta/relatório/agendamento.
    - Quando em dúvida, prefira incluir call_ingest_tool como primeiro passo.
 
-4. CHAT GERAL / ONBOARDING:
+5. CHAT GERAL / ONBOARDING:
    - Se o usuário só estiver:
      - cumprimentando ('oi', 'olá', 'bom dia'),
      - agradecendo ('valeu', 'obrigado'),
@@ -311,28 +338,28 @@ REGRAS CRÍTICAS DE ENCAMINHAMENTO:
      → use call_chat_tool (pode ser a única ferramenta).
    - NÃO chame ferramentas de ingestão/consulta se a pergunta for apenas conceitual.
 
-5. ESCOLHA ENTRE QUERY, REPORT E SCHEDULE:
+6. ESCOLHA ENTRE QUERY, REPORT E SCHEDULE:
    - use call_query_tool para perguntas exploratórias que o usuário quer responder dentro do chat:
      'explique a implementação do requisito X', 'quais commits mencionam a issue Y?',
      'como o módulo A evoluiu ao longo do tempo?', 'liste PRs que tocam o arquivo Z'.
    - use call_report_tool quando o usuário pedir explicitamente um RELATÓRIO/GRÁFICO/EXPORT
      para DOWNLOAD AGORA.
    - use call_schedule_tool sempre que houver desejo de ENVIO POR EMAIL ou RECORRÊNCIA
-     (diária, semanal, mensal).
+     (diária, semanal, mensal ou envio único agendado em um horário específico).
 
-6. SALVAR INSTRUÇÕES:
+7. SALVAR INSTRUÇÕES:
    - use call_save_instruction_tool quando o usuário falar coisas como:
      'salvar esse modelo de relatório', 'guarde essa instrução para usar depois',
      'crie um template de relatório de rastreabilidade', etc.
    - É comum combinar com call_report_tool ou call_schedule_tool em um plano multi-etapas.
 
-7. VALIDAÇÃO DE ARGUMENTOS:
+8. VALIDAÇÃO DE ARGUMENTOS:
    - Se um argumento obrigatório estiver faltando (como o nome do repositório),
      NÃO invente valores.
      Em vez disso, retorne uma resposta textual de clarificação (tipo: pedir para o usuário informar).
    - Nunca invente o nome de repositório, email ou timezone.
 
-8. IDIOMA:
+9. IDIOMA:
    - Responda sempre no mesmo idioma do usuário (neste caso, normalmente português).
 
 Data/Hora de referência: Hoje é {datetime.now(pytz.timezone('America/Sao_Paulo')).strftime('%Y-%m-%d')}.
@@ -427,8 +454,8 @@ OBJETIVO:
 REGRAS PRINCIPAIS:
 1. Use SOMENTE o contexto fornecido.
    - Se algo não estiver no contexto, diga claramente que não encontrou evidências.
-   - Nunca invente IDs de requisito, hashes de commit, números de PR, "
-     "issues ou arquivos que não apareçam no texto do contexto.
+   - Nunca invente IDs de requisito, hashes de commit, números de PR, issues ou arquivos
+     que não apareçam no texto do contexto.
 
 2. Estruture a resposta de forma clara e útil para Engenharia de Software.
    Sugestão de estrutura (quando fizer sentido):
@@ -730,7 +757,7 @@ Regras:
                 tz = args.get('timezone')
                 
                 if freq == 'once':
-                    schedule_details = f"e enviar imediatamente para o email **{email}**"
+                    schedule_details = f"e enviar uma vez para o email **{email}**"
                 else:
                     schedule_details = (
                         f"e agendar com frequência **{freq}** às {hora} "
@@ -763,8 +790,6 @@ As ações acima serão executadas em ordem sequencial (uma depende da anterior)
         """
         print(f"[LLMService] Gerando sumário de confirmação para agendamento recorrente: {intent_name}...")
         
-        # NOTE: Esta função agora lida apenas com o cenário de agendamento recorrente de um passo.
-        # Caso 1: Agendamento Recorrente (a única ação single-step que precisa de confirmação)
         repo = args.get("repositorio")
         prompt = args.get("prompt_relatorio")
         freq = args.get("frequencia")
