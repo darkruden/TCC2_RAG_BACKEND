@@ -244,19 +244,20 @@ async def _route_intent(
     is_confirmation = last_user_prompt.strip().lower() in CONFIRMATION_WORDS
     is_multi_step = len(steps) > 1
 
-    # Existe algum agendamento em qualquer step?
-    schedule_steps = [
-        s
+    # --- INÍCIO DA CORREÇÃO DE LÓGICA DE CONFIRMAÇÃO ---
+    # Precisamos verificar se *qualquer* etapa é um agendamento recorrente
+    is_recurring_schedule = any(
+        s.get("intent") == "call_schedule_tool" and s.get("args", {}).get("frequencia") not in ["once", None]
         for s in steps
-        if s.get("intent") == "call_schedule_tool"
-    ]
-    has_schedule = len(schedule_steps) > 0
+    )
+    # --- FIM DA CORREÇÃO ---
 
     # Planos complexos ou que envolvem agendamento pedem confirmação explícita
-    if (is_multi_step or has_schedule) and not is_confirmation:
-        if has_schedule and not is_multi_step:
-            # Apenas um agendamento (single-step)
-            first_sched = schedule_steps[0]
+    if (is_multi_step or is_recurring_schedule) and not is_confirmation:
+        
+        # A. AGENDAMENTO RECORRENTE (Single-step):
+        if is_recurring_schedule and not is_multi_step:
+            first_sched = [s for s in steps if s["intent"] == "call_schedule_tool"][0]
             confirmation_text = llm_service.summarize_action_for_confirmation(
                 first_sched["intent"], first_sched["args"]
             )
@@ -265,8 +266,9 @@ async def _route_intent(
                 "message": confirmation_text,
                 "job_id": None,
             }
+        
+        # B. MULTI-STEP:
         else:
-            # Cadeia com múltiplas etapas (ingerir, gerar, agendar, etc.)
             confirmation_text = llm_service.summarize_plan_for_confirmation(
                 steps, user_email
             )
@@ -281,6 +283,8 @@ async def _route_intent(
 
     last_job_id: Optional[str] = None
     final_message = "Tarefas enfileiradas."
+    # Dicionário para rastrear a mensagem do último job *enfileirado*
+    job_messages = {}
 
     for i, step in enumerate(steps):
         intent = step.get("intent")
@@ -289,9 +293,14 @@ async def _route_intent(
 
         print(f"--- Enfileirando Etapa {i+1}/{len(steps)}: {intent} ---")
 
+        # Reseta as variáveis de tarefa do loop
+        func = None
+        params = []
+        target_queue = None
+
         # 3.1) Consulta RAG (streaming) – não vira job de worker
         if intent == "call_query_tool":
-            if i == len(steps) - 1:
+            if i == len(steps) - 1: # Só executa se for a última etapa
                 payload = {
                     "repositorio": repo,
                     "prompt_usuario": args.get("prompt_usuario"),
@@ -301,13 +310,12 @@ async def _route_intent(
                     "message": json.dumps(payload),
                     "job_id": None,
                 }
-            # Se por acaso a query vier no meio de um plano, ignoramos aqui
             continue
 
         # 3.2) INGEST, REPORT, SAVE_INSTRUCTION
-        if intent == "call_ingest_tool":
+        elif intent == "call_ingest_tool":
             func = ingest_repo
-            params = [user_id, repo, 50, 20, 30]  # mesmos defaults de antes
+            params = [user_id, repo, 50, 20, 30]
             target_queue = q_ingest
             final_message = f"Solicitação de ingestão para {repo} recebida."
 
@@ -323,74 +331,79 @@ async def _route_intent(
             target_queue = q_ingest
             final_message = f"Instrução para {repo} salva."
 
-        # 3.3) Agendamento / envio por e-mail (sempre via Supabase + check_schedules)
+        # --- INÍCIO DA CORREÇÃO DO BUG DE ROTEAMENTO ---
+        # 3.3) Agendamento / envio por e-mail
         elif intent == "call_schedule_tool":
             freq = args.get("frequencia")
             email_to_use = args.get("user_email") or user_email
             hora = args.get("hora")
             tz = args.get("timezone")
+            
+            if not repo or not args.get("prompt_relatorio") or not freq:
+                 return { "response_type": "clarification", "message": "Para agendar, preciso do repositório, do prompt e da frequência (once, daily, etc.).", "job_id": None }
 
-            # Faltou informação essencial para agendar
-            if not repo or not args.get("prompt_relatorio") or not freq or not hora or not tz:
-                return {
-                    "response_type": "clarification",
-                    "message": (
-                        "Para agendar o envio por e-mail eu preciso do repositório, "
-                        "do texto do relatório, da frequência (once, daily, weekly...) "
-                        "e do horário (HH:MM) + fuso horário."
-                    ),
-                    "job_id": None,
-                }
+            # SE FOR 'ONCE' (envio imediato/encadeado)
+            if freq == "once":
+                print(f"[ChatRouter] Roteando {intent} (once) para a fila RQ.")
+                func = enviar_relatorio_agendado
+                params = [None, email_to_use, repo, args.get("prompt_relatorio"), user_id]
+                target_queue = q_reports
+                final_message = f"Relatório para {repo} será enviado para {email_to_use} assim que as etapas anteriores concluírem."
+            
+            # SE FOR RECORRENTE (daily, weekly, etc.)
+            else:
+                if not hora or not tz:
+                    return { "response_type": "clarification", "message": f"Para agendamentos '{freq}', preciso também da hora (HH:MM) e timezone.", "job_id": None }
 
-            if not is_confirmation:
-                # Segurança extra: se chegar aqui sem confirmação, pede confirmação específica
-                confirmation_text = llm_service.summarize_action_for_confirmation(
-                    intent, args
+                print(f"[ChatRouter] Roteando {intent} ({freq}) para o Agendador (Supabase)...")
+                msg = create_schedule(
+                    user_id=user_id,
+                    user_email=email_to_use,
+                    repo=repo,
+                    prompt=args["prompt_relatorio"],
+                    freq=freq,
+                    hora=hora,
+                    tz=tz,
                 )
-                return {
-                    "response_type": "clarification",
-                    "message": confirmation_text,
-                    "job_id": None,
-                }
-
-            # Aqui criamos de fato o agendamento no Supabase
-            msg = create_schedule(
-                user_id=user_id,
-                user_email=email_to_use,
-                repo=repo,
-                prompt=args["prompt_relatorio"],
-                freq=freq,
-                hora=hora,
-                tz=tz,
-            )
-            # Nada é enfileirado neste step; quem dispara o envio é o check_schedules.py
-            final_message = msg
-            continue  # pula o enqueue() abaixo
+                
+                # Se este for o último step, retornamos a msg do agendamento
+                if i == len(steps) - 1 and not last_job_id:
+                     return { "response_type": "answer", "message": msg, "job_id": None }
+                
+                # Se não for o último step, apenas continuamos
+                # (Não há job a ser enfileirado)
+                final_message = msg
+                continue
+        # --- FIM DA CORREÇÃO DO BUG DE ROTEAMENTO ---
 
         else:
-            print(f"[ChatRouter] AVISO: Intenção {intent} não é tratada como tarefa de worker. Pulando.")
+            print(f"[ChatRouter] AVISO: Intenção {intent} não é tratada. Pulando.")
             continue
 
-        # 3.4) Enfileira o job com dependência do anterior (se existir)
-        job = target_queue.enqueue(
-            func,
-            *params,
-            depends_on=last_job_id if last_job_id else None,
-            job_timeout=1800,
-        )
-        last_job_id = job.id
-
+        # 3.4) Enfileira o job (apenas se 'func' foi definido)
+        if func and target_queue:
+            job = target_queue.enqueue(
+                func,
+                *params,
+                depends_on=last_job_id if last_job_id else None,
+                job_timeout=1800,
+            )
+            last_job_id = job.id
+            job_messages[last_job_id] = final_message
+    
     # 4) Resposta final para o frontend
     if last_job_id:
+        # Responde com a mensagem do ÚLTIMO job enfileirado
         return {
             "response_type": "job_enqueued",
-            "message": final_message,
+            "message": job_messages.get(last_job_id, "Tarefas enfileiradas."),
             "job_id": last_job_id,
         }
-
+    
+    # Caso nenhum job tenha sido enfileirado (ex: só agendamento recorrente)
     return {
-        "response_type": "clarification",
-        "message": "Não foi possível enfileirar a(s) tarefa(s). Verifique os argumentos e tente novamente.",
+        "response_type": "answer",
+        "message": final_message, # (será a msg do create_schedule, se foi o caso)
         "job_id": None,
     }
 
