@@ -34,12 +34,14 @@ def _convert_time_to_utc(local_time_str: str, timezone_str: str) -> str:
         local_tz = pytz.timezone(timezone_str)
         local_dt = local_tz.localize(local_dt)
         utc_dt = local_dt.astimezone(pytz.utc)
-        return utc_dt.strftime('%H:%M:%S')
+        # CORREÇÃO: Garante que os segundos sejam 00 para comparação do agendador.
+        return utc_dt.strftime('%H:%M') + ':00'
         
     except Exception as e:
         print(f"[SchedulerService] Erro ao converter timezone: {e}. Usando UTC como fallback.")
         try:
-            return datetime.strptime(local_time_str, '%H:%M').strftime('%H:%M:%S')
+            # Fallback também deve ser HH:MM:00
+            return datetime.strptime(local_time_str, '%H:%M').strftime('%H:%M') + ':00'
         except:
             return "00:00:00"
 

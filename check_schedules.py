@@ -41,35 +41,36 @@ def fetch_and_queue_jobs():
     
     try:
         now_utc = datetime.now(pytz.utc)
-        current_utc_hour = now_utc.replace(minute=0, second=0, microsecond=0).time()
+        # CORREÇÃO: Usa a hora e minuto atual, forçando segundos a 00 para bater
+        # com o que está salvo em 'hora_utc'.
+        current_utc_time_str = now_utc.strftime('%H:%M') + ':00' 
         
-        print(f"[Scheduler] Hora atual (UTC, arredondada): {current_utc_hour}")
+        print(f"[Scheduler] Hora atual (UTC, arredondada ao minuto): {current_utc_time_str}")
 
-        # --- INÍCIO DA ATUALIZAÇÃO ---
         # 1. Seleciona o user_id junto com os outros campos
         response = supabase.table("agendamentos").select("id, user_email, repositorio, prompt_relatorio, ultimo_envio, user_id") \
             .eq("ativo", True) \
-            .eq("hora_utc", str(current_utc_hour)) \
+            .eq("hora_utc", current_utc_time_str) \
             .execute()
-        # --- FIM DA ATUALIZAÇÃO ---
 
         if not response.data:
             print("[Scheduler] Nenhum agendamento encontrado para esta hora.")
             return
-
+            
         print(f"[Scheduler] Encontrados {len(response.data)} agendamentos.")
         jobs_enfileirados = 0
         
         for agendamento in response.data:
             ultimo_envio = agendamento.get("ultimo_envio")
+            # Adicionamos a checagem da data aqui para garantir que a comparação seja apenas da data
             if ultimo_envio:
-                ultimo_envio_data = datetime.fromisoformat(ultimo_envio).date()
-                if ultimo_envio_data == now_utc.date():
+                # Converte o timestamp salvo (que inclui data) para objeto datetime
+                ultimo_envio_dt = datetime.fromisoformat(ultimo_envio.replace('Z', '+00:00')) 
+                # Compara apenas a data
+                if ultimo_envio_dt.date() == now_utc.date():
                     print(f"[Scheduler] Pulando job {agendamento['id']} (já enviado hoje).")
                     continue
             
-            # --- INÍCIO DA ATUALIZAÇÃO ---
-            # 2. Pega o user_id (essencial)
             user_id = agendamento.get("user_id")
             if not user_id:
                 print(f"[Scheduler] ERRO: Pulando job {agendamento['id']} (user_id está nulo no banco).")
@@ -77,17 +78,15 @@ def fetch_and_queue_jobs():
             
             print(f"[Scheduler] Enfileirando relatório (User: {user_id}) para: {agendamento['user_email']}")
             
-            # 3. Passa o user_id como o último argumento
             q_reports.enqueue(
                 'worker_tasks.enviar_relatorio_agendado', 
                 agendamento['id'],
                 agendamento['user_email'],
                 agendamento['repositorio'],
                 agendamento['prompt_relatorio'],
-                user_id, # <-- Passa o user_id para o worker
+                user_id, 
                 job_timeout=1800
             )
-            # --- FIM DA ATUALIZAÇÃO ---
             
             jobs_enfileirados += 1
 
