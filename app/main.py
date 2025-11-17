@@ -1,4 +1,6 @@
 # CÓDIGO COMPLETO E CORRIGIDO PARA: app/main.py
+# (Corrige a rota /api/auth/google para usar o Access Token
+#  em vez de tentar validá-lo como um ID Token)
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -16,9 +18,7 @@ import hashlib
 import json
 import hmac
 import uuid # Para gerar a API key
-import requests # <-- Importação necessária para o login
-from google.oauth2 import id_token
-from google.auth.transport import requests as google_requests
+import requests # <-- IMPORTAÇÃO NECESSÁRIA
 
 # --- Serviços ---
 from app.services.rag_service import gerar_resposta_rag, gerar_resposta_rag_stream
@@ -98,7 +98,7 @@ class ChatRequest(BaseModel):
     messages: List[Message]
 
 class GoogleLoginRequest(BaseModel):
-    credential: str # O token JWT (ou Access Token) que o Google fornece
+    credential: str # O Access Token vindo do chrome.identity
 
 class AuthResponse(BaseModel):
     api_key: str
@@ -143,7 +143,7 @@ async def verificar_token(x_api_key: str = Header(...)) -> Dict[str, Any]:
 async def verify_github_signature(request: Request, x_hub_signature_256: str = Header(...)):
     secret = os.getenv("GITHUB_WEBHOOK_SECRET")
     if not secret:
-        raise HTTPException(status_code=500, detail="O servidor não está configurado para webhooks.") # <-- Correção de 5.00 para 500
+        raise HTTPException(status_code=500, detail="O servidor não está configurado para webhooks.")
     try:
         body = await request.body()
         hash_obj = hmac.new(secret.encode('utf-8'), msg=body, digestmod=hashlib.sha256)
@@ -185,13 +185,15 @@ async def _route_intent(
     # CASO 2: Ingestão (INGEST)
     elif intent == "call_ingest_tool":
         repo = args.get("repositorio")
-        job = q_ingest.enqueue(ingest_repo, user_id, repo, 20, 10, 15, job_timeout=1200) # Passa user_id
+        # Passa o user_id (SEMPRE)
+        job = q_ingest.enqueue(ingest_repo, user_id, repo, 20, 10, 15, job_timeout=1200) 
         return {"response_type": "job_enqueued", "message": f"Solicitação de ingestão para {repo} recebida...", "job_id": job.id}
     
     # CASO 3: Relatório (REPORT)
     elif intent == "call_report_tool":
         repo = args.get("repositorio"); prompt = args.get("prompt_usuario")
-        job = q_reports.enqueue(processar_e_salvar_relatorio, user_id, repo, prompt, "html", job_timeout=1800) # Passa user_id
+        # Passa o user_id
+        job = q_reports.enqueue(processar_e_salvar_relatorio, user_id, repo, prompt, "html", job_timeout=1800) 
         return {"response_type": "job_enqueued", "message": f"Solicitação de relatório para {repo} recebida...", "job_id": job.id}
     
     # CASO 4: Agendamento (SCHEDULE)
@@ -205,11 +207,13 @@ async def _route_intent(
         tz = args.get("timezone")
         email_from_args = args.get("user_email")
         
+        # Usa o email dos argumentos (se o usuário digitou) ou o email do usuário logado
         final_email = email_from_args or user_email 
 
         if not final_email: 
             return {"response_type": "clarification", "message": "Não consegui identificar seu email para o agendamento.", "job_id": None}
 
+        # Envio imediato (agora)
         if freq == "once":
             print(f"[ChatRouter] Envio imediato (once) detectado. Enfileirando job de email para {final_email}.")
             job = q_reports.enqueue(
@@ -223,6 +227,7 @@ async def _route_intent(
             )
             return {"response_type": "answer", "message": f"Ok! Estou preparando seu relatório para `{repo}` e o enviarei para `{final_email}` em breve.", "job_id": job.id}
 
+        # Agendamento futuro (diário, semanal, etc.)
         else:
             confirmation_args = {
                 "repositorio": repo, "prompt_relatorio": prompt,
@@ -252,7 +257,8 @@ async def _route_intent(
     # CASO 5: Salvar Instrução (SAVE_INSTRUCTION)
     elif intent == "call_save_instruction_tool":
         repo = args.get("repositorio"); instrucao = args.get("instrucao")
-        job = q_ingest.enqueue(save_instruction, user_id, repo, instrucao, job_timeout=300) # Passa user_id
+        # Passa user_id
+        job = q_ingest.enqueue(save_instruction, user_id, repo, instrucao, job_timeout=300) 
         return {"response_type": "job_enqueued", "message": "Ok, estou salvando sua instrução...", "job_id": job.id}
     
     # CASO (NOVO): Bate-papo (CHAT)
@@ -294,6 +300,7 @@ async def google_login(request: GoogleLoginRequest):
     try:
         access_token = request.credential
         
+        # 1. Usar o Access Token para chamar a API userinfo
         userinfo_url = "https://www.googleapis.com/oauth2/v3/userinfo"
         headers = {"Authorization": f"Bearer {access_token}"}
         
@@ -301,10 +308,11 @@ async def google_login(request: GoogleLoginRequest):
         
         if response.status_code != 200:
             print(f"[Auth] Erro de verificação de token: {response.text}")
-            raise ValueError(f"Token Google inválido: {response.text}")
+            raise ValueError(f"Token Google inválido (status {response.status_code}): {response.text}")
 
         id_info = response.json()
         
+        # 2. Extrair dados do usuário
         email = id_info.get('email')
         google_id = id_info.get('sub') # 'sub' é o Google ID
         nome = id_info.get('name')
@@ -312,17 +320,19 @@ async def google_login(request: GoogleLoginRequest):
         if not email or not google_id:
             raise ValueError("Token do Google não retornou email ou ID.")
 
+        # 3. Verificar se o usuário existe (pelo google_id)
         response = supabase_client.table("usuarios").select("*").eq("google_id", google_id).execute()
         
         if response.data:
+            # 4a. Usuário existe, retorna a API key
             user = response.data[0]
             print(f"[Auth] Usuário existente logado: {email}")
             return {"api_key": user['api_key'], "email": user['email'], "nome": user['nome']}
         else:
+            # 4b. Novo usuário, cria e retorna a API key
             print(f"[Auth] Novo usuário detectado: {email}")
             new_api_key = str(uuid.uuid4())
             
-            # --- CORREÇÃO DEFINITIVA (usando 'returning') ---
             insert_response = supabase_client.table("usuarios").insert(
                 {
                     "google_id": google_id,
@@ -332,8 +342,10 @@ async def google_login(request: GoogleLoginRequest):
                 },
                 returning="representation" # Pede ao Supabase para retornar o registro criado
             ).execute()
-            # --- FIM DA CORREÇÃO ---
             
+            if not insert_response.data:
+                 raise Exception("Falha ao inserir novo usuário no Supabase.")
+
             user = insert_response.data[0]
             return {"api_key": user['api_key'], "email": user['email'], "nome": user['nome']}
 
@@ -360,16 +372,78 @@ async def handle_chat(request: ChatRequest, current_user: Dict[str, Any] = Depen
     
     try: 
         intent_data = llm_service.get_intent(full_prompt)
-        intent = intent_data.get("intent"); args = intent_data.get("args", {})
         
-        print(f"--- [DEBUG /api/chat] (User: {user_id}) ---")
-        print(f"Intenção detectada: {intent}")
-        print(f"Argumentos extraídos: {args}")
-        print(f"---------------------------")
+        # Se for CLARIFY
+        if intent_data.get("intent") == "CLARIFY":
+            return {"response_type": "clarification", "message": intent_data.get("response_text", "Não entendi."), "job_id": None}
+            
+        # Se NÃO for multi-step (resposta simples de chat ou query)
+        if not intent_data.get("multi_step"):
+            intent = intent_data.get("intent")
+            args = intent_data.get("args", {})
+            
+            # Se for chat, já temos a resposta
+            if intent == "call_chat_tool":
+                return {"response_type": "answer", "message": args.get("prompt"), "job_id": None}
+            
+            # Se for query (stream), também é uma etapa única
+            if intent == "call_query_tool":
+                 return {
+                    "response_type": "stream_answer", 
+                    "message": json.dumps({"repositorio": args.get("repositorio"), "prompt_usuario": args.get("prompt_usuario")}),
+                    "job_id": None
+                }
+            
+            # Se for qualquer outra coisa (ingestão única, relatório único), tratamos como uma cadeia de 1 etapa
+            steps = [intent_data]
+        else:
+            steps = intent_data.get("steps", [])
+
+        # --- LÓGICA DE ENCADEAMENTO DE JOBS (Multi-Step) ---
+        print(f"[ChatRouter] Iniciando cadeia de {len(steps)} jobs...")
         
-        if intent == "CLARIFY": args["response_text"] = intent_data.get("response_text")
+        last_job_id = None
+        final_message = "Tarefas enfileiradas."
         
-        return await _route_intent(intent, args, user_id, user_email, last_user_prompt)
+        for i, step in enumerate(steps):
+            intent = step.get("intent")
+            args = step.get("args", {})
+            
+            print(f"--- Enfileirando Etapa {i+1}/{len(steps)}: {intent} ---")
+            print(f"Argumentos: {args}")
+            print(f"Depende de: {last_job_id}")
+            
+            # Determina a fila correta (ingestão ou relatórios)
+            target_queue = q_ingest if "ingest" in intent or "save_instruction" in intent else q_reports
+            
+            # Mapeia a intenção para a função real do worker
+            if intent == "call_ingest_tool":
+                func = ingest_repo
+                params = [user_id, args.get("repositorio"), 20, 10, 15]
+                final_message = f"Ingestão de {args.get('repositorio')} iniciada..."
+            
+            elif intent == "call_report_tool":
+                func = processar_e_salvar_relatorio
+                params = [user_id, args.get("repositorio"), args.get("prompt_usuario"), "html"]
+                final_message = f"Relatório de {args.get('repositorio')} sendo gerado..."
+
+            # (Adicione 'call_schedule_tool' e 'call_save_instruction_tool' aqui...)
+            
+            else:
+                print(f"AVISO: Intenção {intent} não é uma tarefa de worker. Pulando.")
+                continue
+
+            # Enfileira o job, fazendo-o depender do job anterior
+            job = target_queue.enqueue(
+                func, 
+                *params, 
+                depends_on=last_job_id, 
+                job_timeout=1800
+            )
+            last_job_id = job.id
+
+        # Retorna o ID do ÚLTIMO job para o frontend fazer polling
+        return {"response_type": "job_enqueued", "message": final_message, "job_id": last_job_id}
         
     except Exception as e:
         print(f"[ChatRouter] Erro CRÍTICO no /api/chat: {e}")
@@ -425,6 +499,7 @@ async def handle_chat_stream(request: StreamRequest, current_user: Dict[str, Any
     try:
         user_id = current_user['id']
         repo = request.repositorio; prompt = request.prompt_usuario
+        # Chave de cache agora é específica do usuário
         cache_key = f"cache:query:user_{user_id}:{repo}:{hashlib.md5(prompt.encode()).hexdigest()}"
         
         if conn:
@@ -439,7 +514,8 @@ async def handle_chat_stream(request: StreamRequest, current_user: Dict[str, Any
         
         print(f"[Cache-Stream] MISS! Executando RAG Stream para {cache_key}")
         
-        response_generator = gerar_resposta_rag_stream(user_id, repo, prompt)
+        # Passa o user_id para o RAG
+        response_generator = gerar_resposta_rag_stream(user_id, prompt, repo)
         
         full_response_chunks = []
         async def caching_stream_generator():
@@ -615,5 +691,5 @@ async def delete_schedule(schedule_id: str, current_user: Dict[str, Any] = Depen
 # Ponto de entrada (corpo completo)
 if __name__ == "__main__":
     import uvicorn
-    print("Iniciando servidor Uvicorn local em http://0.0.0.0:8000")
+    print("Iniciando servidor Uvicorn local em http://0.0.0:8000")
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

@@ -227,36 +227,64 @@ Se o usuário disser "agora" ou "imediatamente" para um agendamento, use 'freque
     
     def get_intent(self, user_query: str) -> Dict[str, Any]:
         """
-        Orquestra a cadeia de roteamento robusto em duas etapas.
+        Orquestra o roteamento. Agora retorna UMA ou MAIS ferramentas.
         """
         if not self.client: raise Exception("LLMService não inicializado.")
 
-        # Etapa 1: Decidir a intenção
-        meta_intent_result = self._get_meta_intent(user_query)
+        # Juntamos todas as ferramentas que queremos que o modelo escolha
+        tools = [
+            self.tool_ingest,
+            self.tool_query,
+            self.tool_report,
+            self.tool_schedule,
+            self.tool_save_instruction,
+            self.tool_chat
+        ]
         
-        if meta_intent_result["status"] == "clarify":
-            return {"intent": "CLARIFY", "response_text": meta_intent_result["response_text"]}
+        system_prompt = f"""
+Você é um assistente de IA que decompõe um prompt de usuário em uma ou mais etapas (chamadas de ferramenta).
+Analise o prompt do usuário e retorne TODAS as ferramentas necessárias na ordem correta.
 
-        intent_name = meta_intent_result["intent"] # ex: "SCHEDULE"
-
-        # Se for CHAT, não precisamos extrair argumentos complexos
-        if intent_name == "CHAT":
-            return {
-                "intent": "call_chat_tool",
-                "args": {"prompt": user_query.split('\n')[-1]} # Envia só a última linha
-            }
-
-        # Etapa 2: Extrair os argumentos
-        args_result = self._get_arguments_for_intent(user_query, intent_name)
+- Se o usuário pedir para ingerir E analisar, retorne 'call_ingest_tool' PRIMEIRO, e 'call_report_tool' DEPOIS.
+- Se a intenção for vaga ou casual, use 'call_chat_tool'.
+- Se a intenção for clara, mas faltarem argumentos (como o nome do repo), você DEVE retornar uma intenção "CLARIFY".
+- Hoje é {datetime.now(pytz.timezone('America/Sao_Paulo')).strftime('%Y-%m-%d')}.
+- O fuso horário padrão é 'America/Sao_Paulo'.
+"""
         
-        if args_result["status"] == "clarify":
-            return {"intent": "CLARIFY", "response_text": args_result["response_text"]}
+        try:
+            response = self.client.chat.completions.create(
+                model=self.routing_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_query}
+                ],
+                tools=tools,
+                tool_choice="auto"  # <-- MUDANÇA CRÍTICA: Deixamos a IA decidir
+            )
+            
+            message = response.choices[0].message
+            tool_calls = message.tool_calls
 
-        # Sucesso!
-        return {
-            "intent": args_result["intent_tool_name"], # ex: "call_schedule_tool"
-            "args": args_result["args"]
-        }
+            if not tool_calls:
+                # A IA decidiu que era um bate-papo simples
+                chat_text = message.content or "Entendido."
+                return {"intent": "call_chat_tool", "args": {"prompt": chat_text}, "multi_step": False}
+
+            # Temos uma ou mais chamadas de ferramenta
+            steps = []
+            for call in tool_calls:
+                steps.append({
+                    "intent": call.function.name,
+                    "args": json.loads(call.function.arguments)
+                })
+
+            print(f"[LLMService] Intenções detectadas: {len(steps)} etapas.")
+            return {"steps": steps, "multi_step": True}
+
+        except Exception as e:
+            print(f"[LLMService] Erro no get_intent multi-step: {e}")
+            return {"intent": "CLARIFY", "response_text": f"Erro interno ao processar: {e}"}
     
     
     def generate_response(self, query: str, context: List[Dict[str, Any]]) -> Dict[str, Any]:
