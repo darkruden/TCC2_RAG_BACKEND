@@ -1,5 +1,5 @@
 # CÓDIGO COMPLETO E CORRIGIDO PARA: app/main.py
-# (Implementa o Agente de Encadeamento de Tarefas com RQ.depends_on)
+# (Implementa o Agente de Encadeamento de Tarefas com Confirmação no Loop)
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -181,11 +181,32 @@ async def _route_intent(
         simple_response = llm_service.generate_simple_response(intent_data.get("response_text", last_user_prompt))
         return {"response_type": "answer", "message": simple_response, "job_id": None}
 
-    # --- LÓGICA DE ENCADEAMENTO DE JOBS (Multi-Step / Task Chaining) ---
+    # --- LÓGICA DE EXECUÇÃO E CONFIRMAÇÃO ---
     steps = intent_data.get("steps", [])
     if not steps:
         return {"response_type": "clarification", "message": "Não consegui identificar nenhuma ação válida para executar. Tente reformular sua pergunta.", "job_id": None}
     
+    is_confirmation = last_user_prompt.strip().lower() in CONFIRMATION_WORDS
+    
+    # 1. IDENTIFICAÇÃO DE CONFIRMAÇÃO NECESSÁRIA
+    is_multi_step = len(steps) > 1
+    # Verifica se a primeira etapa é um agendamento recorrente.
+    is_recurring_schedule = steps[0]["intent"] == "call_schedule_tool" and steps[0]["args"].get("frequencia") not in ["once", None]
+    
+    # Se o LLM gerou um plano complexo OU um agendamento recorrente E o usuário NÃO confirmou:
+    if (is_multi_step or is_recurring_schedule) and not is_confirmation:
+        
+        # A. AGENDAMENTO RECORRENTE (Single-step): Usa a função de sumarização original
+        if is_recurring_schedule and not is_multi_step:
+            confirmation_text = llm_service.summarize_action_for_confirmation(steps[0]["intent"], steps[0]["args"])
+            return {"response_type": "clarification", "message": confirmation_text, "job_id": None}
+        
+        # B. MULTI-STEP: Usa a nova função de sumarização de plano
+        elif is_multi_step:
+            confirmation_text = llm_service.summarize_plan_for_confirmation(steps, user_email)
+            return {"response_type": "clarification", "message": confirmation_text, "job_id": None}
+
+    # 2. PASSO DE EXECUÇÃO (Se for confirmação OU ação imediata/única)
     print(f"[ChatRouter] Iniciando cadeia de {len(steps)} jobs...")
     
     last_job_id = None
@@ -200,30 +221,23 @@ async def _route_intent(
         
         # CASO 1: Consulta RAG (QUERY)
         if intent == "call_query_tool":
-            # Consulta é stream e não depende de jobs de worker. Só executa se for o ÚLTIMO passo ou o único.
             if i == len(steps) - 1:
-                return {
-                    "response_type": "stream_answer", 
-                    "message": json.dumps({"repositorio": repo, "prompt_usuario": args.get("prompt_usuario")}),
-                    "job_id": None
-                }
+                return {"response_type": "stream_answer", "message": json.dumps({"repositorio": repo, "prompt_usuario": args.get("prompt_usuario")}), "job_id": None}
             continue
 
-        # CASO 2: Ingestão (INGEST)
+        # CASO 2, 3, 4: INGEST, REPORT, SAVE_INSTRUCTION
         elif intent == "call_ingest_tool":
             func = ingest_repo
             params = [user_id, repo, 50, 20, 30] 
             target_queue = q_ingest
             final_message = f"Solicitação de ingestão para {repo} recebida."
         
-        # CASO 3: Relatório (REPORT)
         elif intent == "call_report_tool":
             func = processar_e_salvar_relatorio
             params = [user_id, repo, args.get("prompt_usuario"), "html"]
             target_queue = q_reports
             final_message = f"Solicitação de relatório para {repo} recebida."
 
-        # CASO 4: Salvar Instrução (SAVE_INSTRUCTION)
         elif intent == "call_save_instruction_tool":
             func = save_instruction
             params = [user_id, repo, args.get("instrucao")]
@@ -233,23 +247,25 @@ async def _route_intent(
         # CASO 5: Agendamento (SCHEDULE)
         elif intent == "call_schedule_tool":
             freq = args.get("frequencia")
-            if freq == "once":
-                # Envio Imediato (Job no RQ)
+            email_to_use = args.get('user_email') or user_email
+            
+            if freq == "once" or (is_confirmation and is_recurring_schedule):
+                # Se for 'once' OU se for a confirmação do agendamento recorrente
                 func = enviar_relatorio_agendado
-                params = [None, user_email, repo, args.get("prompt_relatorio"), user_id]
+                params = [None, email_to_use, repo, args.get("prompt_relatorio"), user_id]
                 target_queue = q_reports
-                final_message = f"Relatório para {repo} será enviado para {user_email} em breve."
+                final_message = f"Relatório para {repo} será enviado para {email_to_use} em breve."
+            
+            elif is_confirmation and is_recurring_schedule:
+                # Cria o agendamento recorrente no DB (não é um job do RQ)
+                msg = create_schedule(user_id=user_id, user_email=email_to_use, repo=repo, prompt=args["prompt_relatorio"], 
+                                      freq=freq, hora=args["hora"], tz=args["timezone"])
+                return {"response_type": "answer", "message": msg, "job_id": None}
+
             else:
-                # Agendamento Recorrente (Requer confirmação)
-                is_confirmation = last_user_prompt.strip().lower() in CONFIRMATION_WORDS
-                if is_confirmation:
-                    msg = create_schedule(user_id=user_id, user_email=user_email, repo=repo, prompt=args["prompt_relatorio"], 
-                                          freq=freq, hora=args["hora"], tz=args["timezone"])
-                    return {"response_type": "answer", "message": msg, "job_id": None}
-                else:
-                    confirmation_text = llm_service.summarize_action_for_confirmation(intent, args)
-                    return {"response_type": "clarification", "message": confirmation_text, "job_id": None}
-        
+                # Deve ter sido tratada no bloco de confirmação, se chegou aqui é falha
+                continue
+
         else:
             print(f"AVISO: Intenção {intent} não é processável como tarefa de worker. Pulando.")
             continue
@@ -271,6 +287,8 @@ async def _route_intent(
 
 
 # --- Rotas da API (v2) ---
+# ... (O restante do app.main.py permanece inalterado)
+
 @app.get("/health")
 async def health_check():
     redis_status = "desconectado"

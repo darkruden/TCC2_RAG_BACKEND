@@ -383,42 +383,71 @@ Se o usuário disser 'obrigado', responda com 'De nada!' ou 'Estou aqui para aju
         
         return formatted_text
 
-    def summarize_action_for_confirmation(self, intent_name: str, args: Dict[str, Any]) -> str:
-        print(f"[LLMService] Gerando sumário de confirmação para {intent_name}...")
+    def summarize_plan_for_confirmation(self, steps: List[Dict[str, Any]], user_email: str) -> str:
+        """
+        Gera uma pergunta de confirmação humanizada baseada no plano de execução.
+        (Usa regras determinísticas para estabilidade e velocidade)
+        """
+        print(f"[LLMService] Gerando sumário de confirmação para plano de {len(steps)} etapas (Deterministic)...")
         
-        system_prompt = f"""
-Você é um assistente de confirmação. Sua tarefa é ler um JSON de argumentos e traduzi-lo 
-em uma pergunta de confirmação clara, educada e em português.
+        plan_summary_list = []
+        for step in steps:
+            intent = step['intent'].replace('call_', '').replace('_tool', '').capitalize()
+            args = step['args']
+            
+            summary_line = f"* **{intent}:** "
 
-- Comece com 'Ok, só para confirmar...'
-- Resuma todos os argumentos de forma fluida.
-- Termine com a pergunta 'Isso está correto?'
+            if intent == 'Ingest':
+                summary_line += f"Ingerir o repositório **{args.get('repositorio')}** para atualizar o RAG."
+            elif intent == 'Query':
+                summary_line += f"Consultar (RAG) o repositório {args.get('repositorio')} com a pergunta: '{args.get('prompt_usuario', '')}'."
+            elif intent == 'Report':
+                summary_line += f"Gerar relatório para **DOWNLOAD** do repositório {args.get('repositorio')} (Prompt: '{args.get('prompt_usuario', '')}')."
+            elif intent == 'Schedule':
+                freq = args.get('frequencia')
+                repo = args.get('repositorio')
+                email = args.get('user_email') or user_email
+                
+                schedule_details = f"e enviar Imediatamente para o email **{email}**" if freq == 'once' else f"e agendar para **{freq}** às {args.get('hora')} (fuso {args.get('timezone')})"
+                
+                summary_line += f"Preparar relatório {schedule_details} (Repo: {repo})."
+            elif intent == 'SaveInstruction':
+                summary_line += f"Salvar a instrução para futuros relatórios do repositório {args.get('repositorio')}."
+            
+            plan_summary_list.append(summary_line)
 
-Exemplo de Entrada:
-{{"intent": "agendamento", "args": {{"repositorio": "user/repo", "frequencia": "daily", "hora": "10:00"}}}}
+        plan_text = "\n".join(plan_summary_list)
+        
+        confirmation_message = f"""
+**Ok, só para confirmar o plano de execução ({len(steps)} etapas):**
+{plan_text}
 
-Exemplo de Saída:
-Ok, só para confirmar: Devo agendar o relatório para o repositório 'user/repo', 
-com frequência diária, às 10:00. Isso está correto?
+As ações acima serão executadas em ordem sequencial (uma depende da anterior).
+**Isso está correto?** (Responda 'sim' ou 'não')
 """
-        
-        action_summary = json.dumps({"intent": intent_name, "args": args})
+        return confirmation_message
 
-        try:
-            response = self.client.chat.completions.create(
-                model=self.routing_model, 
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": action_summary}
-                ],
-                temperature=0.1
-            )
-            confirmation_text = response.choices[0].message.content
-            return confirmation_text
+    def summarize_action_for_confirmation(self, intent_name: str, args: Dict[str, Any]) -> str:
+        """
+        [MANTIDA] - Gera a confirmação para uma ÚNICA ação de Agendamento Recorrente (Regra de Negócio Antiga).
+        """
+        print(f"[LLMService] Gerando sumário de confirmação para agendamento recorrente: {intent_name}...")
         
-        except Exception as e:
-            print(f"[LLMService] Erro ao gerar sumário: {e}")
-            return f"Ok, devo executar a ação '{intent_name}' com os argumentos: {json.dumps(args)}. Isso está correto?"
+        # NOTE: Esta função agora lida apenas com o cenário de agendamento recorrente de um passo.
+        # Caso 1: Agendamento Recorrente (a única ação single-step que precisa de confirmação)
+        repo = args.get("repositorio")
+        prompt = args.get("prompt_relatorio")
+        freq = args.get("frequencia")
+        hora = args.get("hora")
+        tz = args.get("timezone")
+
+        confirmation_text = f"""
+Ok, só para confirmar: Devo **agendar** o relatório para o repositório '{repo}' com o prompt: '{prompt[:50]}...',
+com frequência **{freq}**, às **{hora}** (fuso {tz}).
+
+Isso está correto? (Responda 'sim' ou 'não')
+"""
+        return confirmation_text
 
     def _format_requirements_data(self, requirements_data: List[Dict[str, Any]]) -> str:
         if not requirements_data:
