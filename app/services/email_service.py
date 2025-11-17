@@ -1,5 +1,5 @@
 # CÓDIGO COMPLETO E CORRIGIDO PARA: app/services/email_service.py
-# (Usa o SDK oficial do Brevo e corresponde às importações do projeto)
+# (Corrige o NameError de escopo da BREVO_API_KEY)
 
 import os
 import sib_api_v3_sdk
@@ -7,20 +7,28 @@ from sib_api_v3_sdk.rest import ApiException
 from typing import Optional
 
 # 1. Configuração do Cliente Brevo (Sendinblue)
+
+# --- INÍCIO DA CORREÇÃO ---
+# Carrega a chave da API para uma variável global
+BREVO_API_KEY = os.getenv("BREVO_API_KEY") 
+# --- FIM DA CORREÇÃO ---
+
 configuration = sib_api_v3_sdk.Configuration()
-configuration.api_key['api-key'] = os.getenv("BREVO_API_KEY")
+# Agora usa a variável global para configurar a API
+configuration.api_key['api-key'] = BREVO_API_KEY
 
 api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
 
 # 2. Carrega as configurações do remetente
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
-# (Melhoria: Trazido da Versão 2, para ser configurável)
 SENDER_NAME = os.getenv("SENDER_NAME", "GitRAG TCC") 
 
 def _send_email(subject: str, html_content: str, to_email: str):
     """
     Função helper interna para enviar um email transacional.
     """
+    # Esta verificação agora funcionará corretamente, pois
+    # BREVO_API_KEY e SENDER_EMAIL existem no escopo global.
     if not BREVO_API_KEY or not SENDER_EMAIL:
         print("[EmailService] ERRO: BREVO_API_KEY ou SENDER_EMAIL não configurados.")
         # Lança a exceção para que o worker (RQ) possa registrar a falha do job
