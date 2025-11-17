@@ -294,25 +294,36 @@ async def health_check():
 @app.post("/api/auth/google", response_model=AuthResponse)
 async def google_login(request: GoogleLoginRequest):
     """
-    Verifica o token JWT do Google, cria/atualiza o usuário no banco
+    Verifica o Access Token (vindo do chrome.identity) chamando a
+    API userinfo do Google. Cria/atualiza o usuário no banco
     e retorna a API Key pessoal desse usuário.
+    
+    O 'credential' aqui é o ACCESS TOKEN, não um ID Token.
     """
-    if not GOOGLE_CLIENT_ID:
-        raise HTTPException(status_code=500, detail="Auth não configurado no servidor (sem Client ID).")
     if not supabase_client:
         raise HTTPException(status_code=500, detail="Serviço de DB não inicializado.")
 
     try:
-        # 1. Verificar o token do Google
-        id_info = id_token.verify_oauth2_token(
-            request.credential, 
-            google_requests.Request(), 
-            GOOGLE_CLIENT_ID
-        )
+        access_token = request.credential
         
-        email = id_info['email']
-        google_id = id_info['sub']
+        # 1. Verificar o Access Token com a API do Google
+        userinfo_url = "https://www.googleapis.com/oauth2/v3/userinfo"
+        headers = {"Authorization": f"Bearer {access_token}"}
+        
+        response = requests.get(userinfo_url, headers=headers)
+        
+        if response.status_code != 200:
+            print(f"[Auth] Erro de verificação de token: {response.text}")
+            raise ValueError(f"Token Google inválido: {response.text}")
+
+        id_info = response.json()
+        
+        email = id_info.get('email')
+        google_id = id_info.get('sub') # 'sub' é o Google ID
         nome = id_info.get('name')
+
+        if not email or not google_id:
+            raise ValueError("Token do Google não retornou email ou ID.")
 
         # 2. Fazer "Upsert" no banco (Encontrar ou Criar)
         response = supabase_client.table("usuarios").select("*").eq("google_id", google_id).execute()
@@ -334,6 +345,13 @@ async def google_login(request: GoogleLoginRequest):
             
             user = insert_response.data[0]
             return {"api_key": user['api_key'], "email": user['email'], "nome": user['nome']}
+
+    except ValueError as e:
+        print(f"[Auth] Erro de verificação de token: {e}")
+        raise HTTPException(status_code=401, detail=f"Token Google inválido: {e}")
+    except Exception as e:
+        print(f"[Auth] Erro crítico no login: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro interno no servidor: {e}")
 
     except ValueError as e:
         print(f"[Auth] Erro de verificação de token: {e}")
