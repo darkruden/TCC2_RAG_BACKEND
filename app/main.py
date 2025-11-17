@@ -89,13 +89,22 @@ app = FastAPI(
     version="0.4.0",
 )
 
+# --- INÍCIO DA CORREÇÃO DE CORS ---
+# Substituímos o ["*"] por uma lista explícita de origens.
+# O wildcard "*" é incompatível com allow_credentials=True.
+ALLOWED_ORIGINS = [
+    "chrome-extension://ajiinnakfafbdkfmodpbmdlbegjmehfh", # ID da sua extensão 
+    "http://localhost:3000", # Para desenvolvimento local do frontend
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Ajuste depois para domínios específicos, se necessário
+    allow_origins=ALLOWED_ORIGINS, # <-- ALTERADO AQUI
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# --- FIM DA CORREÇÃO DE CORS ---
 
 # --- Modelos Pydantic ---
 class Message(BaseModel):
