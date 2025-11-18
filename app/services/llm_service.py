@@ -1,4 +1,5 @@
-# CÓDIGO COMPLETO E OTIMIZADO PARA: app/services/llm_service.py
+# CÓDIGO COMPLETO E CORRIGIDO PARA: app/services/llm_service.py
+# (Fix: Permite passagem de URLs completas com /tree/ para suporte a branches)
 
 import os
 import json
@@ -19,18 +20,18 @@ class LLMService:
         self.client = OpenAI(api_key=self.api_key)
         self.token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
-        # --- DEFINIÇÃO DE FERRAMENTAS (Simplificadas para facilitar o entendimento da IA) ---
+        # --- DEFINIÇÃO DE FERRAMENTAS ---
         
         self.tool_send_onetime_report = {
             "type": "function",
             "function": {
                 "name": "call_send_onetime_report_tool",
-                "description": "Envia um relatório por EMAIL IMEDIATAMENTE. Use se o usuário disser 'envie agora', 'mande para o email', 'não agende'.",
+                "description": "Envia um relatório por EMAIL IMEDIATAMENTE.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "repositorio": {"type": "string", "description": "Nome do repositório (ex: user/repo). Se for URL, extraia o nome."},
-                        "prompt_relatorio": {"type": "string", "description": "O assunto ou foco do relatório."},
+                        "repositorio": {"type": "string", "description": "URL completa ou nome do repositório."},
+                        "prompt_relatorio": {"type": "string", "description": "O assunto do relatório."},
                         "email_destino": {"type": "string", "description": "O email para envio."},
                     },
                     "required": ["repositorio", "prompt_relatorio", "email_destino"],
@@ -46,7 +47,7 @@ class LLMService:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "repositorio": {"type": "string", "description": "Nome do repositório (ex: user/repo)."}
+                        "repositorio": {"type": "string", "description": "A URL completa do GitHub (ex: https://github.com/user/repo/tree/dev) ou apenas user/repo."}
                     },
                     "required": ["repositorio"]
                 }
@@ -57,11 +58,11 @@ class LLMService:
             "type": "function",
             "function": {
                 "name": "call_query_tool",
-                "description": "Responde perguntas no chat sobre o código/projeto.",
+                "description": "Responde perguntas no chat sobre o código.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "repositorio": {"type": "string", "description": "Nome do repositório."},
+                        "repositorio": {"type": "string", "description": "URL ou nome do repositório."},
                         "prompt_usuario": {"type": "string", "description": "A pergunta do usuário."}
                     },
                     "required": ["repositorio", "prompt_usuario"],
@@ -73,11 +74,11 @@ class LLMService:
             "type": "function",
             "function": {
                 "name": "call_report_tool",
-                "description": "Gera relatório para DOWNLOAD (arquivo). NÃO envia email.",
+                "description": "Gera relatório para DOWNLOAD (arquivo).",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "repositorio": {"type": "string", "description": "Nome do repositório."},
+                        "repositorio": {"type": "string", "description": "URL ou nome do repositório."},
                         "prompt_usuario": {"type": "string", "description": "Descrição do relatório."}
                     },
                     "required": ["repositorio", "prompt_usuario"],
@@ -89,11 +90,11 @@ class LLMService:
             "type": "function",
             "function": {
                 "name": "call_schedule_tool",
-                "description": "Agenda relatórios futuros ou recorrentes.",
+                "description": "Agenda relatórios futuros.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "repositorio": {"type": "string", "description": "Nome do repositório."},
+                        "repositorio": {"type": "string", "description": "URL ou nome do repositório."},
                         "prompt_relatorio": {"type": "string", "description": "Foco do relatório."},
                         "frequencia": {"type": "string", "description": "'diariamente', 'semanalmente', 'mensalmente'."},
                         "hora": {"type": "string", "description": "Hora HH:MM."},
@@ -112,7 +113,7 @@ class LLMService:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "repositorio": {"type": "string", "description": "Nome do repositório."},
+                        "repositorio": {"type": "string", "description": "URL ou nome do repositório."},
                         "instrucao": {"type": "string", "description": "Texto da instrução."}
                     },
                     "required": ["repositorio", "instrucao"],
@@ -124,7 +125,7 @@ class LLMService:
             "type": "function",
             "function": {
                 "name": "call_chat_tool",
-                "description": "Bate-papo casual sem dados do repositório.",
+                "description": "Bate-papo casual.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -162,15 +163,12 @@ class LLMService:
             if 'timezone' not in args or not args['timezone']:
                 args['timezone'] = 'America/Sao_Paulo'
         
-        # Normalização de URL para Nome de Repositório
+        # --- CORREÇÃO CRÍTICA ---
+        # Removemos a lógica de 'parse manual' da URL aqui.
+        # Agora passamos a URL inteira para o GithubService lidar com branches.
         if 'repositorio' in args:
-            repo = args['repositorio']
-            if 'github.com' in repo:
-                # Extrai 'user/repo' de 'https://github.com/user/repo'
-                parts = repo.rstrip('/').split('/')
-                if len(parts) >= 2:
-                    args['repositorio'] = f"{parts[-2]}/{parts[-1]}"
-                    print(f"[LLMService] URL convertida para nome: {args['repositorio']}")
+            print(f"[LLMService] Repositório preservado (raw): {args['repositorio']}")
+            # A validação se é URL ou user/repo acontece no GithubService.parse_repo_url
 
         return args
 
@@ -180,37 +178,22 @@ class LLMService:
         
         print(f"[LLMService] Roteando: '{user_query}'")
         
-        # PROMPT OTIMIZADO E DIRETO
+        # PROMPT OTIMIZADO PARA NÃO CORTRAR URLs
         system_prompt = f"""
 Você é um roteador de intenções do GitRAG.
-Sua ÚNICA função é mapear o pedido do usuário para as ferramentas corretas.
 
 IMPORTANTE SOBRE REPOSITÓRIOS:
-- Se o usuário fornecer uma URL completa (https://github.com/user/repo), extraia e use apenas "user/repo".
-- Se o usuário não fornecer o repositório, chame a ferramenta com o campo vazio (a validação cuidará disso).
+1. Se o usuário fornecer uma URL (ex: 'https://github.com/user/repo/tree/dev'), passe a URL COMPLETA como argumento. NÃO TENTE EXTRAIR APENAS O NOME.
+2. Se fornecer apenas 'user/repo', use isso.
+3. Se não fornecer, deixe o campo vazio.
 
 DECISÃO DE FERRAMENTAS:
-1. EMAIL AGORA ("Envie agora", "Mande pro meu email", "Sem agendar"):
-   -> Use **call_send_onetime_report_tool**.
-
-2. AGENDAR ("Todo dia", "Semanalmente", "Agende para as 10h"):
-   -> Use **call_schedule_tool**.
-
-3. DOWNLOAD/VER ("Gerar relatório", "Baixar", "Criar gráfico", "Exportar"):
-   -> Use **call_report_tool**.
-
-4. PERGUNTA ("Como funciona X?", "Quem fez o commit Y?", "Explique o código"):
-   -> Use **call_query_tool**.
-
-5. INGESTÃO ("Ingerir", "Atualizar dados", "Ler repositório"):
-   -> Use **call_ingest_tool**.
-
-6. OUTROS ("Oi", "O que você faz?", "Ajuda"):
-   -> Use **call_chat_tool**.
-
-COMBINAÇÕES PERMITIDAS (Retorne múltiplas ferramentas se necessário):
-- "Ingira e mande email agora" -> [call_ingest_tool, call_send_onetime_report_tool]
-- "Ingira e responda" -> [call_ingest_tool, call_query_tool]
+- EMAIL AGORA -> call_send_onetime_report_tool
+- AGENDAR -> call_schedule_tool
+- DOWNLOAD/RELATÓRIO -> call_report_tool
+- PERGUNTA SOBRE CÓDIGO -> call_query_tool
+- INGESTÃO/ATUALIZAR -> call_ingest_tool
+- PAPO FURADO -> call_chat_tool
 
 Data Hoje: {datetime.now(pytz.timezone('America/Sao_Paulo')).strftime('%Y-%m-%d')}.
 """
@@ -240,7 +223,7 @@ Data Hoje: {datetime.now(pytz.timezone('America/Sao_Paulo')).strftime('%Y-%m-%d'
                 try:
                     args = json.loads(call.function.arguments)
                     
-                    # A mágica acontece aqui: tratamos a URL antes de passar pra frente
+                    # Processa argumentos sem destruir a URL
                     args_with_fallback = self._handle_tool_call_args({
                         'function': {'name': call.function.name, 'arguments': args}
                     })
