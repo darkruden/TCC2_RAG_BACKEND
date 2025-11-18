@@ -307,7 +307,7 @@ async def _route_intent(
 
         elif intent == "call_ingest_tool":
             func = ingest_repo
-            params = [user_id, repo, 50, 20, 30]
+            params = [user_id, repo, 1000, 20, 30]
             target_queue = q_ingest
             final_message = f"Solicitação de ingestão para {repo} recebida."
 

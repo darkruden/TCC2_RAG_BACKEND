@@ -124,6 +124,40 @@ class MetadataService:
             print(f"[MetadataService] Erro na busca vetorial de instruções: {e}")
             return None
 
+    def check_repo_exists(self, user_id: str, repo_name: str) -> bool:
+        """Verifica se existe algum documento deste repositório para este usuário."""
+        if not self.supabase: return False
+        try:
+            # Verifica apenas 1 registro para ser rápido (head)
+            response = self.supabase.table("documentos") \
+                .select("id") \
+                .eq("user_id", user_id) \
+                .eq("repositorio", repo_name) \
+                .limit(1) \
+                .execute()
+            return len(response.data) > 0
+        except Exception as e:
+            print(f"[MetadataService] Erro ao verificar existência: {e}")
+            return False
+
+    def delete_file_documents_only(self, user_id: str, repo_name: str):
+        """
+        Deleta APENAS os documentos do tipo 'file' (código fonte).
+        Mantém 'commit', 'issue', 'pr' e 'instruction'.
+        Usado na atualização para renovar o código sem perder o histórico.
+        """
+        if not self.supabase: return
+        print(f"[MetadataService] Renovando código fonte (files) para: {repo_name}")
+        try:
+            self.supabase.table("documentos").delete() \
+                .eq("user_id", user_id) \
+                .eq("repositorio", repo_name) \
+                .eq("tipo", "file") \
+                .execute()
+        except Exception as e:
+            print(f"[MetadataService] Erro ao limpar arquivos antigos: {e}")
+            raise
+
     def get_distinct_users_for_repo(self, repo_name: str) -> List[str]:
         if not self.supabase: raise Exception("Serviço Supabase não está inicializado.")
         try:

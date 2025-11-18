@@ -107,14 +107,19 @@ def _run_with_logs(task_func, *args, **kwargs):
         traceback.print_exc()
         raise e
 
-def ingest_repo(user_id: str, repo_url: str, max_items: int = 50, batch_size: int = 20, max_depth: int = 30):
+def ingest_repo(user_id: str, repo_url: str, max_items: int = 1000, batch_size: int = 20, max_depth: int = 30):
+    """
+    Tarefa de ingestão.
+    - max_items: 5000 garante a busca de todo o histórico para projetos acadêmicos/médios.
+    """
     return _run_with_logs(
         ingest_service.ingest_repository,
-        user_id,
-        repo_url,
-        max_items,
-        batch_size,
-        max_depth,
+        user_id=user_id,
+        repo_url=repo_url,
+        issues_limit=max_items,    # Busca até 5000 issues
+        prs_limit=max_items,       # Busca até 5000 PRs
+        commits_limit=max_items,   # Busca até 5000 Commits
+        max_depth=max_depth,
     )
 
 def processar_e_salvar_relatorio(user_id: str, repo_url: str, prompt: str, formato: str = "html") -> str:

@@ -71,30 +71,49 @@ class IngestService:
         try:
             repo_name = self.github_service.parse_repo_url(repo_url)
             
-            # --- CORREÇÃO CRÍTICA AQUI ---
-            # Forçamos None para ignorar o timestamp anterior.
-            # Isso garante que baixaremos TODO o histórico novamente, 
-            # já que vamos limpar o banco de dados nas linhas abaixo.
-            latest_timestamp = None 
+            # --- LÓGICA DE INGESTÃO INTELIGENTE ---
             
+            # 1. Verifica se o repositório já existe no banco
+            exists = self.metadata_service.check_repo_exists(user_id, repo_name)
+            latest_timestamp = None
+            tipo_ingestao = "COMPLETA"
+
+            if exists:
+                print(f"[IngestService] Repositório {repo_name} encontrado. Verificando atualizações...")
+                # Tenta pegar a data do último item salvo para fazer o delta
+                latest_timestamp = self.metadata_service.get_latest_timestamp(user_id, repo_name)
+                
+                if latest_timestamp:
+                    tipo_ingestao = "INCREMENTAL"
+                    print(f"[IngestService] Modo INCREMENTAL ativado. Buscando dados desde: {latest_timestamp}")
+                else:
+                    print("[IngestService] AVISO: Repositório existe mas sem data válida. Forçando ingestão completa.")
+
+                # Na atualização, deletamos APENAS o código antigo ('file') para substituir pelo novo.
+                # O histórico (commits, issues, PRs) é mantido e apenas adicionamos os novos.
+                self.metadata_service.delete_file_documents_only(user_id, repo_name)
+            
+            else:
+                print(f"[IngestService] Primeira vez ingerindo {repo_name}. Modo COMPLETO.")
+                # Se é a primeira vez (ou estava corrompido), limpa TUDO para garantir.
+                self.metadata_service.delete_documents_by_repo(user_id, repo_name)
+
+            # 2. Busca Arquivos (Sempre pega o snapshot atual do código)
             files = self.github_service.get_repo_files_batch(repo_url, max_depth)
             
-            # 'since' será None, trazendo todos os dados disponíveis (até o limite)
+            # 3. Busca Metadados (Se incremental, usa 'since' para trazer só os novos)
             metadata = self.github_service.get_repo_data_batch(
                 repo_url, issues_limit, prs_limit, commits_limit, since=latest_timestamp
             )
             
             if not files and not metadata["commits"] and not metadata["issues"] and not metadata["prs"]:
-                print("[IngestService] Nenhum dado encontrado no GitHub. Ingestão abortada.")
-                return {"status": "vazio", "repo": repo_name, "arquivos": 0, "chunks": 0}
-
-            # Como estamos fazendo ingestão completa, sempre deletamos os dados antigos
-            print(f"[IngestService] Ingestão completa (Safe Mode). Deletando dados antigos para substituição...")
-            self.metadata_service.delete_documents_by_repo(user_id, repo_name)
+                print("[IngestService] Nenhum dado novo encontrado no GitHub.")
+                return {"status": "atualizado_sem_mudancas", "repo": repo_name, "arquivos": 0, "chunks": 0}
 
             all_documents = []
             
-            # Processamento de Arquivos
+            # 4. Processamento de Arquivos
+            print(f"[IngestService] Processando {len(files)} arquivos de código atuais...")
             for file_data in files:
                 file_content = file_data.get("content", "")
                 chunks = self.text_splitter.split_text(file_content)
@@ -110,24 +129,33 @@ class IngestService:
                     )
                     all_documents.append(doc)
             
+            # 5. Processamento de Metadados
+            # Se for incremental, 'metadata' contém apenas os itens novos retornados pelo GitHub
+            count_commits = len(metadata.get('commits', []))
+            count_issues = len(metadata.get('issues', []))
+            print(f"[IngestService] Processando {count_commits} commits e {count_issues} issues novos...")
+            
             metadata_docs = self._create_metadata_documents(user_id, repo_name, metadata)
             all_documents.extend(metadata_docs)
 
             total_chunks = len(all_documents)
-            print(f"[IngestService] {len(files)} arquivos e {len(metadata_docs)} metadados processados. {total_chunks} chunks gerados.")
+            print(f"[IngestService] Total de {total_chunks} chunks para salvar.")
             
+            # 6. Salva em lotes
             batch_size = 50 
             for i in range(0, total_chunks, batch_size):
                 batch = all_documents[i : i + batch_size]
                 self.metadata_service.save_documents_batch(user_id, batch)
-                print(f"[IngestService] Lote {i//batch_size + 1} salvo. ({len(batch)} chunks)")
+                print(f"[IngestService] Lote {i//batch_size + 1} salvo.")
 
-            print(f"[IngestService] Ingestão (User: {user_id}) de {repo_name} concluída com sucesso.")
+            print(f"[IngestService] Ingestão {tipo_ingestao} de {repo_name} concluída.")
             return {
                 "status": "sucesso",
+                "tipo": tipo_ingestao,
                 "repo": repo_name,
-                "arquivos": len(files),
-                "chunks": total_chunks,
+                "arquivos_processados": len(files),
+                "novos_metadados": len(metadata_docs),
+                "chunks_gerados": total_chunks,
             }
 
         except Exception as e:
@@ -214,3 +242,4 @@ class IngestService:
             else:
                 print(f"[IngestService] Nenhum item novo de metadados encontrado para {user_id}.")
         return {"status": "processed", "event": event_type, "users_notified": len(user_ids)}
+    
