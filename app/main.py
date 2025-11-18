@@ -108,7 +108,11 @@ app.add_middleware(
 # --- Modelos Pydantic ---
 class Message(BaseModel):
     sender: str
-    text: str
+    # Torna o texto opcional (pode vir nulo ou vazio sem dar erro)
+    text: Optional[str] = "" 
+    
+    # Configuração para IGNORAR campos extras (job_id, fontes, etc.) que o frontend mandar
+    model_config = { "extra": "ignore" }
 
 
 class ChatRequest(BaseModel):
@@ -546,6 +550,11 @@ async def handle_chat(
     # Formata o histórico de forma mais explícita para o roteador de intenção
     history_lines: List[str] = []
     for msg in request.messages:
+        # --- PROTEÇÃO CONTRA MENSAGENS VAZIAS ---
+        conteudo_texto = msg.text or "" # Garante que não seja None
+        if not conteudo_texto.strip(): 
+            continue # Pula mensagens sem texto (ex: mensagens de status do sistema)
+            
         sender_norm = msg.sender.lower()
         if sender_norm in ("user", "usuário", "usuario"):
             role_label = "Usuário"
@@ -554,7 +563,7 @@ async def handle_chat(
         else:
             role_label = msg.sender.capitalize()
 
-        history_lines.append(f"{role_label}: {msg.text}")
+        history_lines.append(f"{role_label}: {conteudo_texto}") # Usa a variável protegida
 
     full_prompt = (
         "Histórico da conversa entre Usuário e Assistente GitRAG (mensagens mais recentes ao final):\n"
