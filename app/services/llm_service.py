@@ -26,26 +26,19 @@ class LLMService:
             "function": {
                 "name": "call_ingest_tool",
                 "description": (
-                    "Usado quando o usuário quer ingerir, re-ingerir ou atualizar o índice RAG "
-                    "de um repositório GitHub. "
-                    "Serve para a primeira ingestão, para atualizar dados após novas alterações "
-                    "ou para garantir que o índice esteja sincronizado antes de consultas, "
-                    "relatórios ou agendamentos."
+                    "Usado quando o usuário quer **explicitamente** ingerir, re-ingerir ou "
+                    "atualizar o índice RAG de um repositório GitHub. **Não use esta ferramenta "
+                    "automaticamente antes de um relatório ou agendamento, a menos que o usuário solicite "
+                    "uma atualização dos dados.**"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "repositorio": {
-                            "type": "string",
-                            "description": (
-                                "O nome do repositório no formato 'usuario/nome'. "
-                                "Nunca invente esse valor. Se não for fornecido, peça esclarecimento."
-                            )
-                        }
+                        "repositorio": {"type": "string", "description": "O nome completo do repositório GitHub (ex: 'user/repo_name').", "pattern": "^[^/]+/[^/]+$"}
                     },
-                    "required": ["repositorio"],
-                },
-            },
+                    "required": ["repositorio"]
+                }
+            }
         }
         
         self.tool_query = {
@@ -124,51 +117,22 @@ class LLMService:
             "function": {
                 "name": "call_schedule_tool",
                 "description": (
-                    "Usado quando o usuário quer ENVIAR um relatório por EMAIL (agora ou agendado). "
-                    "Use sempre que 'email', 'e-mail', 'agendar', 'alerta', 'monitorar', "
-                    "'todo dia', 'toda semana', 'todo mês' ou 'enviar para mim' for mencionado. "
-                    "Ideal para monitorar requisitos, módulos críticos, qualidade de código e "
-                    "evolução do projeto ao longo do tempo."
+                    "Usado para agendar um relatório recorrente para o e-mail do usuário. "
+                    "Deve ser usada como a **última etapa** em um plano de execução."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "repositorio": {
-                            "type": "string",
-                            "description": "O nome do repositório no formato 'usuario/nome'."
-                        },
-                        "prompt_relatorio": {
-                            "type": "string",
-                            "description": (
-                                "O que o relatório deve conter. "
-                                "Descreva o objetivo do relatório e o foco de rastreabilidade "
-                                "ou métricas que devem ser monitoradas."
-                            )
-                        },
-                        "frequencia": {
-                            "type": "string",
-                            "enum": ["once", "daily", "weekly", "monthly"],
-                            "description": (
-                                "A frequência. Use 'once' para um envio único (agendado para um horário), "
-                                "'daily' para diário, 'weekly' para semanal, 'monthly' para mensal."
-                            )
-                        },
-                        "hora": {
-                            "type": "string",
-                            "description": "A hora local desejada pelo usuário, no formato HH:MM (24h)."
-                        },
-                        "timezone": {
-                            "type": "string",
-                            "description": "O fuso horário (ex: 'America/Sao_Paulo')."
-                        },
-                        "user_email": {
-                            "type": "string",
-                            "description": "O email do destinatário (ex: usuario@gmail.com)."
-                        }
+                        "repositorio": {"type": "string", "description": "O nome completo do repositório GitHub (ex: 'user/repo_name').", "pattern": "^[^/]+/[^/]+$"},
+                        "prompt_relatorio": {"type": "string", "description": "O prompt do relatório a ser agendado."},
+                        "frequencia": {"type": "string", "description": "A frequência do relatório: 'diariamente', 'semanalmente' ou 'mensalmente'."},
+                        "hora": {"type": "string", "description": "A hora do dia no formato HH:MM (ex: '09:30')."},
+                        "timezone": {"type": "string", "description": "Fuso horário do usuário (ex: 'America/Sao_Paulo'). **O padrão é 'America/Sao_Paulo' se o usuário não mencionar outro.**"}
                     },
-                    "required": ["repositorio", "prompt_relatorio", "frequencia", "hora", "timezone"], 
-                },
-            },
+                    # AQUI: 'timezone' REMOVIDO do required
+                    "required": ["repositorio", "prompt_relatorio", "frequencia", "hora"]
+                }
+            }
         }
         
         self.tool_save_instruction = {
@@ -245,6 +209,22 @@ class LLMService:
         }
 
     
+    # Novo método auxiliar para tratar a chamada de ferramenta
+    def _handle_tool_call_args(self, tool_call: Dict[str, Any]) -> Dict[str, Any]:
+        """Aplica lógica de fallback e validação nos argumentos da ferramenta."""
+        name = tool_call.get('function', {}).get('name')
+        args = tool_call.get('function', {}).get('arguments', {})
+        
+        if name == "call_schedule_tool":
+            # 1. Fallback de Timezone
+            if 'timezone' not in args or not args['timezone']:
+                args['timezone'] = 'America/Sao_Paulo'
+                print(f"[LLMService] AVISO: Timezone não fornecido. Usando fallback: {args['timezone']}")
+        
+        # 2. (Outras validações/fallbacks podem ser adicionadas aqui)
+        
+        return args
+
     def get_intent(self, user_query: str) -> Dict[str, Any]:
         """
         Orquestra o roteamento. Agora retorna UMA ou MAIS ferramentas encadeadas.
@@ -393,10 +373,19 @@ Fuso horário padrão para agendamentos: 'America/Sao_Paulo'.
             for call in tool_calls:
                 try:
                     args = json.loads(call.function.arguments)
+                    
+                    # --- CORREÇÃO AQUI: Aplica o fallback antes de salvar nos steps ---
+                    # O _handle_tool_call_args exige a estrutura completa
+                    args_with_fallback = self._handle_tool_call_args({
+                        'function': {'name': call.function.name, 'arguments': args}
+                    })
+                    
                     steps.append({
                         "intent": call.function.name,
-                        "args": args
+                        "args": args_with_fallback
                     })
+                    # --- FIM DA CORREÇÃO ---
+                    
                 except json.JSONDecodeError:
                     return {
                         "type": "clarify",
@@ -412,8 +401,12 @@ Fuso horário padrão para agendamentos: 'America/Sao_Paulo'.
                     func_def = self.tool_map.get(step["intent"], {}).get("function", {})
                     required_params = func_def.get("parameters", {}).get("required", [])
                     
+                    # Usa os args já corrigidos do step
+                    args_to_check = step["args"] 
+                    
                     for param in required_params:
-                        if not step["args"].get(param):
+                        # Verifica se o campo está faltando APÓS o fallback (se aplicável)
+                        if not args_to_check.get(param): 
                             return {
                                 "type": "clarify",
                                 "response_text": (

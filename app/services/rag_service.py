@@ -25,30 +25,40 @@ class RAGService:
             self.metadata_service = None
 
     def _format_context_for_llm(self, context_docs: List[Dict[str, Any]]) -> Tuple[str, List[Dict[str, Any]]]:
-        # (Esta função parece estar faltando no seu arquivo original, mas é necessária)
+        """
+        Formata os documentos de contexto do RAG em uma string legível para a LLM,
+        e retorna uma lista de fontes para ser exibida na UI.
+        """
         if not context_docs:
-            return "Nenhum contexto encontrado.", []
+            return "", []
+            
+        context_parts = []
+        sources_ui = []
 
-        # Formata o contexto para a LLM
-        context_list = []
-        for doc in context_docs:
-            context_list.append({
-                "path": doc.get('file_path', 'N/A'),
-                "content": doc.get('conteudo', 'N/A')
-            })
-        
-        # Cria as "fontes" para a UI
-        fontes_ui = []
-        for doc in context_docs:
-            fontes_ui.append({
-                "tipo": doc.get("tipo", "arquivo"),
-                "id": doc.get("id"),
-                "similaridade": doc.get("similarity"),
-                "url": doc.get("metadados", {}).get("url", "URL N/A"),
-                "path": doc.get('file_path', doc.get('metadados', {}).get('titulo', 'N/A'))
+        for i, doc in enumerate(context_docs):
+            # Obtém file_path e conteudo (o que vem do metadata_service)
+            file_path = doc.get('file_path', 'N/A')
+            content = doc.get('conteudo', 'N/A')
+            
+            # Limita o conteúdo para evitar prompts muito longos
+            content_snippet = content[:5000] 
+            
+            # Cria a string do contexto para ser injetada no prompt do LLM
+            context_parts.append(
+                f"--- Documento de Contexto RAG {i+1} ---\n"
+                f"Caminho do Arquivo: {file_path}\n"
+                f"Conteúdo:\n{content_snippet}\n"
+                f"--- Fim do Documento {i+1} ---"
+            )
+            
+            # Cria a lista de fontes para o front-end
+            sources_ui.append({
+                "source_id": i + 1,
+                "file_path": file_path
             })
             
-        return json.dumps(context_list), fontes_ui
+        # O LLMService receberá o contexto como uma única string.
+        return "\n\n".join(context_parts), sources_ui
 
 
     def gerar_resposta_rag(self, user_id: str, prompt_usuario: str, repo_name: str) -> Dict[str, Any]:
