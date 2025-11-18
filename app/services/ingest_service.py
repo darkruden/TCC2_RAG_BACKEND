@@ -1,5 +1,5 @@
 # CÓDIGO COMPLETO E CORRIGIDO PARA: app/services/ingest_service.py
-# (Substitui o fallback quebrado por um Splitter funcional baseado em caracteres)
+# (Correção: Força ingestão completa para evitar perda de histórico ao deletar dados antigos)
 
 import os
 from typing import List, Dict, Any, Optional
@@ -71,35 +71,35 @@ class IngestService:
         try:
             repo_name = self.github_service.parse_repo_url(repo_url)
             
-            latest_timestamp = self.metadata_service.get_latest_timestamp(user_id, repo_name)
+            # --- CORREÇÃO CRÍTICA AQUI ---
+            # Forçamos None para ignorar o timestamp anterior.
+            # Isso garante que baixaremos TODO o histórico novamente, 
+            # já que vamos limpar o banco de dados nas linhas abaixo.
+            latest_timestamp = None 
             
             files = self.github_service.get_repo_files_batch(repo_url, max_depth)
             
+            # 'since' será None, trazendo todos os dados disponíveis (até o limite)
             metadata = self.github_service.get_repo_data_batch(
                 repo_url, issues_limit, prs_limit, commits_limit, since=latest_timestamp
             )
             
             if not files and not metadata["commits"] and not metadata["issues"] and not metadata["prs"]:
-                print("[IngestService] Nenhum dado novo encontrado. Ingestão concluída.")
-                return {"status": "sucesso", "repo": repo_name, "arquivos": 0, "chunks": 0}
+                print("[IngestService] Nenhum dado encontrado no GitHub. Ingestão abortada.")
+                return {"status": "vazio", "repo": repo_name, "arquivos": 0, "chunks": 0}
 
-            if latest_timestamp:
-                print(f"[IngestService] Ingestão incremental. Deletando metadados antigos...")
-                self.metadata_service.delete_documents_by_repo(user_id, repo_name) 
-            else:
-                 print(f"[IngestService] Ingestão completa. Deletando dados antigos...")
-                 self.metadata_service.delete_documents_by_repo(user_id, repo_name)
+            # Como estamos fazendo ingestão completa, sempre deletamos os dados antigos
+            print(f"[IngestService] Ingestão completa (Safe Mode). Deletando dados antigos para substituição...")
+            self.metadata_service.delete_documents_by_repo(user_id, repo_name)
 
             all_documents = []
             
-            # Processamento de Arquivos (AGORA COM SPLIT CORRETO)
+            # Processamento de Arquivos
             for file_data in files:
                 file_content = file_data.get("content", "")
-                # O text_splitter agora vai garantir chunks de max 3000 caracteres
                 chunks = self.text_splitter.split_text(file_content)
                 
                 for chunk in chunks:
-                    # Ignora chunks vazios ou muito pequenos
                     if not chunk.strip(): continue
                     
                     doc = self._create_document_chunk(
@@ -197,6 +197,7 @@ class IngestService:
 
         print(f"[IngestService] Webhook relevante. {len(user_ids)} usuários rastreiam {repo_full_name}.")
         for user_id in user_ids:
+            # Para webhook, mantemos a lógica de buscar apenas o novo, pois webhook é um evento incremental por natureza
             latest_timestamp = self.metadata_service.get_latest_timestamp(user_id, repo_full_name)
             if not latest_timestamp:
                 continue
