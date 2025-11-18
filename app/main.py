@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 from fastapi import FastAPI, Depends, HTTPException, status, Header, Form, File, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Dict, Any
 import os
 import redis
@@ -107,12 +107,33 @@ app.add_middleware(
 
 # --- Modelos Pydantic ---
 class Message(BaseModel):
-    sender: str
-    # Torna o texto opcional (pode vir nulo ou vazio sem dar erro)
-    text: Optional[str] = "" 
-    
-    # Configuração para IGNORAR campos extras (job_id, fontes, etc.) que o frontend mandar
+    sender: str = "assistant" 
+    text: str = ""
+
+    # Configuração Pydantic V2 para ignorar campos extras (job_id, response_type, etc.)
     model_config = { "extra": "ignore" }
+
+    # Validador "Before" (roda ANTES do Pydantic tentar checar os tipos)
+    @model_validator(mode='before')
+    @classmethod
+    def normalizar_dados(cls, data: Any) -> Any:
+        # Se data não for um dicionário, retorna como está (vai falhar na validação padrão)
+        if not isinstance(data, dict):
+            return data
+            
+        # 1. Mapeia 'message' (resposta antiga) para 'text' (campo esperado)
+        if 'text' not in data and 'message' in data:
+            data['text'] = data['message']
+            
+        # 2. Define 'assistant' se o sender estiver ausente
+        if 'sender' not in data:
+            data['sender'] = 'assistant'
+            
+        # 3. Converte None/Null para string vazia para não quebrar
+        if data.get('text') is None:
+            data['text'] = ""
+            
+        return data
 
 
 class ChatRequest(BaseModel):
