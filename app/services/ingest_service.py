@@ -1,24 +1,48 @@
 # CÓDIGO COMPLETO E CORRIGIDO PARA: app/services/ingest_service.py
-# (Refatorado para Injeção de Dependência)
+# (Substitui o fallback quebrado por um Splitter funcional baseado em caracteres)
 
 import os
-from app.services.github_service import GithubService
-from app.services.metadata_service import MetadataService
-from app.services.embedding_service import EmbeddingService
-try:
-    from app.utils.text_splitter import TCC_TextSplitter
-except ImportError:
-    print("[IngestService] AVISO: app.utils.text_splitter não encontrado. Usando fallback.")
-    # Fallback simples
-    class TCC_TextSplitter:
-        def __init__(self, chunk_size=1000, chunk_overlap=100):
-            pass
-        def split_text(self, text):
-            return [text] # Retorna o texto inteiro como um chunk
-
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import traceback
+
+from app.services.github_service import GithubService
+from app.services.metadata_service import MetadataService
+from app.services.embedding_service import EmbeddingService
+
+# --- CLASSE DE SPLITTER REAL (Embutida para evitar ImportError) ---
+class TCC_TextSplitter:
+    """
+    Divisor de texto simples baseado em caracteres para garantir que 
+    os chunks nunca excedam o limite de tokens da OpenAI.
+    """
+    def __init__(self, chunk_size: int = 3000, chunk_overlap: int = 200):
+        # 3000 caracteres é aprox. 750-1000 tokens, muito seguro para o limite de 8192.
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+
+    def split_text(self, text: str) -> List[str]:
+        if not text:
+            return []
+        
+        chunks = []
+        start = 0
+        text_len = len(text)
+
+        while start < text_len:
+            # Define o fim do chunk
+            end = min(start + self.chunk_size, text_len)
+            
+            # Extrai o pedaço
+            chunk = text[start:end]
+            chunks.append(chunk)
+            
+            # Avança o ponteiro, recuando pelo overlap (mas garante que avance)
+            step = self.chunk_size - self.chunk_overlap
+            if step < 1: step = 1
+            start += step
+        
+        return chunks
 
 class IngestService:
     def __init__(
@@ -30,8 +54,9 @@ class IngestService:
         self.github_service = github_service
         self.metadata_service = metadata_service
         self.embedding_service = embedding_service
-        self.text_splitter = TCC_TextSplitter(chunk_size=1000, chunk_overlap=100)
-        print("[IngestService] Serviço de Ingestão inicializado.")
+        # Instancia o splitter seguro definido acima
+        self.text_splitter = TCC_TextSplitter(chunk_size=3000, chunk_overlap=200)
+        print("[IngestService] Serviço de Ingestão inicializado com Splitter Seguro.")
 
     def ingest_repository(
         self,
@@ -59,18 +84,24 @@ class IngestService:
                 return {"status": "sucesso", "repo": repo_name, "arquivos": 0, "chunks": 0}
 
             if latest_timestamp:
-                print(f"[IngestService] Ingestão incremental. Deletando dados de metadados antigos...")
-                # TODO: Lógica de deleção granular (por ID/SHA)
-                self.metadata_service.delete_documents_by_repo(user_id, repo_name) # Temporário: deleta tudo
+                print(f"[IngestService] Ingestão incremental. Deletando metadados antigos...")
+                self.metadata_service.delete_documents_by_repo(user_id, repo_name) 
             else:
-                 print(f"[IngestService] Ingestão completa. Deletando dados antigos (se existirem)...")
+                 print(f"[IngestService] Ingestão completa. Deletando dados antigos...")
                  self.metadata_service.delete_documents_by_repo(user_id, repo_name)
 
             all_documents = []
             
+            # Processamento de Arquivos (AGORA COM SPLIT CORRETO)
             for file_data in files:
-                chunks = self.text_splitter.split_text(file_data["content"])
+                file_content = file_data.get("content", "")
+                # O text_splitter agora vai garantir chunks de max 3000 caracteres
+                chunks = self.text_splitter.split_text(file_content)
+                
                 for chunk in chunks:
+                    # Ignora chunks vazios ou muito pequenos
+                    if not chunk.strip(): continue
+                    
                     doc = self._create_document_chunk(
                         user_id=user_id,
                         repo_name=repo_name,
