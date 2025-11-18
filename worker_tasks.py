@@ -1,5 +1,5 @@
 # CÓDIGO COMPLETO E CORRIGIDO PARA: worker_tasks.py
-# (Usa a arquitetura de Classes e corrige o bug 'download/null')
+# (Corrige a injeção do ReportService mantendo a inicialização global)
 
 import os
 import redis
@@ -62,14 +62,20 @@ try:
         delay=5
     )
     metadata_service = MetadataService(embedding_service=embedding_service) 
+    
+    # 1. Inicializamos o GithubService
     github_service = GithubService(os.getenv("GITHUB_TOKEN"))
+    
+    # 2. Injetamos ele no IngestService (como antes)
     ingest_service = IngestService(github_service, metadata_service, embedding_service)
-    report_service = ReportService(llm_service, metadata_service)
+    
+    # 3. CORREÇÃO AQUI: Agora injetamos ele também no ReportService
+    report_service = ReportService(llm_service, metadata_service, github_service)
     
     print("[WorkerTasks] Todos os serviços (LLM, Embedding, Metadata, GitHub, Ingest, Report) inicializados.")
 except Exception as e:
     print(f"[WorkerTasks] ERRO: Falha ao inicializar serviços: {e}")
-    traceback.print_exc() # Printa o stack trace completo do erro de inicialização
+    traceback.print_exc() 
     llm_service = None
     embedding_service = None
     metadata_service = None

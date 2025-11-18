@@ -1,5 +1,5 @@
 # CÓDIGO COMPLETO E CORRIGIDO PARA: app/services/report_service.py
-# (Implementa a Injeção de Dependência e adiciona os métodos que faltavam)
+# (Adiciona GithubService na injeção de dependência)
 
 import os
 import markdown
@@ -8,16 +8,16 @@ import requests
 import json
 from supabase import create_client, Client
 from typing import Dict, Any, Tuple, Optional, List
-import traceback # Para logar erros
+import traceback
 
 # Importa os serviços que serão INJETADOS
 from app.services.metadata_service import MetadataService
 from app.services.llm_service import LLMService
+from app.services.github_service import GithubService # <--- NOVO IMPORT
 
 class SupabaseStorageService:
     """
     Serviço para fazer upload de arquivos (relatórios) para o Supabase Storage.
-    (Movido para dentro deste arquivo para manter a coesão, já que só é usado aqui)
     """
     def __init__(self):
         self.url: str = os.getenv('SUPABASE_URL')
@@ -25,7 +25,7 @@ class SupabaseStorageService:
         if not self.url or not self.key:
             raise ValueError("SUPABASE_URL e SUPABASE_KEY são obrigatórios.")
         self.client: Client = create_client(self.url, self.key)
-        self.bucket_name = "reports" # Nome do bucket
+        self.bucket_name = "reports" 
 
     def upload_file_content(self, content_string: str, filename: str, content_type: str = 'text/html'):
         try:
@@ -50,107 +50,87 @@ class SupabaseStorageService:
 class ReportService:
     """
     Serviço que coordena a geração de relatórios.
-    Agora aceita LLMService e MetadataService via injeção de dependência.
     """
-    def __init__(self, llm_service: LLMService, metadata_service: MetadataService):
+    def __init__(
+        self, 
+        llm_service: LLMService, 
+        metadata_service: MetadataService,
+        github_service: GithubService # <--- NOVA DEPENDÊNCIA
+    ):
         try:
-            if not llm_service or not metadata_service:
-                raise ValueError("LLMService e MetadataService são obrigatórios.")
+            if not llm_service or not metadata_service or not github_service:
+                raise ValueError("LLMService, MetadataService e GithubService são obrigatórios.")
                 
             self.llm_service = llm_service
             self.metadata_service = metadata_service
+            self.github_service = github_service # <--- GUARDANDO A REFERÊNCIA
             self.storage_service = SupabaseStorageService()
-            print("[ReportService] Serviços (LLM, Metadata, Storage) injetados/inicializados.")
+            print("[ReportService] Serviços (LLM, Metadata, GitHub, Storage) injetados/inicializados.")
         except Exception as e:
             print(f"[ReportService] Erro crítico ao inicializar: {e}")
             raise
     
-    # --- NOVO MÉTODO (Esperado pelo worker_tasks) ---
     def gerar_e_salvar_relatorio(
         self, 
         user_id: str, 
-        repo_url: str, # (worker passa repo_url, não repo_name)
+        repo_url: str, 
         prompt: str, 
         formato: str = "html"
     ) -> str:
-        """
-        Orquestra a geração completa de um relatório para DOWNLOAD.
-        1. Busca todos os dados
-        2. Gera análise com LLM
-        3. Formata (HTML/JSON)
-        4. Faz upload para o Storage
-        5. Retorna o NOME do arquivo para o worker (que o retornará ao /api/relatorio/status)
-        """
         print(f"[ReportService] 1. Iniciando 'gerar_e_salvar_relatorio' para User: {user_id}, Repo: {repo_url}")
         
-        # O worker passa repo_url, mas os serviços internos usam repo_name
-        repo_name = self.metadata_service.github_service.parse_repo_url(repo_url)
+        # CORREÇÃO: Usa self.github_service diretamente, não via metadata_service
+        repo_name = self.github_service.parse_repo_url(repo_url)
         
         try:
-            # 1. Buscar dados
             print(f"[ReportService] 2. Buscando todos os documentos para {repo_name}...")
             raw_data: List[Dict[str, Any]] = self.metadata_service.get_all_documents_for_repository(
                 user_id, repo_name
             )
             if not raw_data:
                 print(f"[ReportService] AVISO: Nenhum documento encontrado para {repo_name}.")
-                # (Continuamos mesmo assim, a LLM pode analisar o "porquê" de estar vazio)
             
-            # 2. Gerar análise JSON (LLM)
             print(f"[ReportService] 3. Enviando {len(raw_data)} documentos para generate_analytics_report...")
             llm_json_output: str = self.llm_service.generate_analytics_report(
                 repo_name, prompt, raw_data
             )
             
-            # 3. Formatar conteúdo (HTML ou JSON)
             print(f"[ReportService] 4. Formatando saída da LLM para {formato}...")
             content_string, filename, content_type = self.generate_report_content(
                 repo_name, llm_json_output, formato
             )
             
-            # 4. Fazer upload
             print(f"[ReportService] 5. Fazendo upload de {filename} para o Storage...")
             self.storage_service.upload_file_content(content_string, filename, content_type)
             
-            # 5. Retornar nome do arquivo
             print(f"[ReportService] 6. Relatório salvo com sucesso: {filename}")
             return filename
             
         except Exception as e:
             print(f"[ReportService] ERRO CRÍTICO em 'gerar_e_salvar_relatorio': {e}")
             traceback.print_exc()
-            # Retorna um nome de arquivo de erro para o job
             return "error_report.html"
 
-    # --- NOVO MÉTODO (Esperado pelo worker_tasks) ---
     def gerar_relatorio_html(
         self, 
         user_id: str, 
         repo_url: str, 
         prompt: str
     ) -> Tuple[str, str]:
-        """
-        Orquestra a geração de um relatório para ENVIO POR EMAIL.
-        Não faz upload (o worker 'enviar_relatorio_agendado' faz isso).
-        Retorna (html_content, filename).
-        """
         print(f"[ReportService] 1. Iniciando 'gerar_relatorio_html' (para email) para User: {user_id}, Repo: {repo_url}")
         
-        repo_name = self.metadata_service.github_service.parse_repo_url(repo_url)
+        # CORREÇÃO: Usa self.github_service diretamente
+        repo_name = self.github_service.parse_repo_url(repo_url)
 
         try:
-            # 1. Buscar dados
             print(f"[ReportService] 2. Buscando todos os documentos para {repo_name}...")
             raw_data = self.metadata_service.get_all_documents_for_repository(user_id, repo_name)
             
-            # 2. Gerar análise JSON (LLM)
             print(f"[ReportService] 3. Enviando {len(raw_data)} documentos para LLM...")
             llm_json_output = self.llm_service.generate_analytics_report(
                 repo_name, prompt, raw_data
             )
             
-            # 3. Formatar conteúdo (HTML)
-            # (Não precisamos de gráfico estático para o email ainda)
             print(f"[ReportService] 4. Formatando saída da LLM para HTML...")
             html_content, filename = self.generate_html_report_content(
                 repo_name, llm_json_output, chart_image_url=None
@@ -171,9 +151,6 @@ class ReportService:
         llm_json_output: str, 
         chart_image_url: Optional[str] = None
     ) -> Tuple[str, str]:
-        """
-        Gera o conteúdo HTML final. (Função existente, mantida)
-        """
         try:
             report_data = json.loads(llm_json_output)
             analysis_markdown = report_data.get("analysis_markdown", "Erro: Análise em Markdown não gerada.")
@@ -195,8 +172,6 @@ class ReportService:
     <canvas id="analyticsChart"></canvas>
 </div>
 <script>
-    // Este script só roda se o cliente de email/browser suportar.
-    // O container branco garante que funcione em modo escuro.
     const chartData = {chart_script_data};
     if (chartData && chartData.data && window.Chart) {{
         try {{
@@ -223,7 +198,6 @@ pre {{ background-color: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px;
 table {{ border-collapse: collapse; width: 100%; margin-top: 1em; margin-bottom: 1em; }}
 th, td {{ border: 1px solid #d0d7de; padding: 8px 12px; }}
 th {{ background-color: #f6f8fa; }}
-/* Estilo escuro (para emails que suportam) */
 @media (prefers-color-scheme: dark) {{
     body {{ background-color: #0d1117; color: #c9d1d9; }}
     main {{ background-color: #161b22; border-color: #30363d; }}
@@ -232,7 +206,7 @@ th {{ background-color: #f6f8fa; }}
     pre {{ background-color: #161b22; border-color: #30363d; }}
     th, td {{ border-color: #30363d; }}
     th {{ background-color: #2b3036; }}
-    .chart-container {{ background-color: #ffffff !important; }} /* Gráfico sempre em fundo branco */
+    .chart-container {{ background-color: #ffffff !important; }} 
 }}
 </style></head><body><main>
 <h1>Relatório de Análise</h1><h2>Repositório: {repo_name}</h2>
@@ -253,9 +227,6 @@ th {{ background-color: #f6f8fa; }}
         format: str = "html",
         chart_image_url: Optional[str] = None
     ) -> Tuple[str, str, str]:
-        """
-        Gera o conteúdo final (HTML ou JSON) para o relatório. (Função existente, mantida)
-        """
         if format.lower() == "html":
             content_string, filename = self.generate_html_report_content(
                 repo_name, 
