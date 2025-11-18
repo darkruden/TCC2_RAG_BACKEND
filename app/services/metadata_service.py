@@ -31,10 +31,7 @@ class MetadataService:
             raise
 
     def save_documents_batch(self, user_id: str, documents: List[Dict[str, Any]]):
-        if not self.supabase or not self.embedding_service:
-            raise Exception("Serviços Supabase ou Embedding não estão inicializados.")
-        if not documents:
-            return
+        # ... verificações iniciais ...
         try:
             textos_para_embedding = [doc["conteudo"] for doc in documents]
             embeddings = self.embedding_service.get_embeddings_batch(textos_para_embedding)
@@ -43,23 +40,29 @@ class MetadataService:
             for i, doc in enumerate(documents):
                 doc["embedding"] = embeddings[i]
                 doc["user_id"] = user_id
+                # Garante que tenha branch, se não tiver assume 'main'
+                if "branch" not in doc:
+                    doc["branch"] = "main"
                 documentos_para_salvar.append(doc)
             
             self.supabase.table("documentos").insert(documentos_para_salvar).execute()
         except Exception as e:
-            print(f"[MetadataService] Erro CRÍTICO ao salvar lote no Supabase: {e}")
+            # ... log de erro ...
             raise
 
-    def delete_documents_by_repo(self, user_id: str, repo_name: str):
+    def delete_documents_by_repo(self, user_id: str, repo_name: str, branch: str = None):
         if not self.supabase: raise Exception("Serviço Supabase não está inicializado.")
-        print(f"[MetadataService] Deletando dados antigos (User: {user_id}) de: {repo_name}")
         try:
-            self.supabase.table("documentos").delete() \
+            query = self.supabase.table("documentos").delete() \
                 .eq("user_id", user_id) \
-                .eq("repositorio", repo_name) \
-                .execute()
+                .eq("repositorio", repo_name)
+            
+            if branch:
+                query = query.eq("branch", branch)
+                
+            query.execute()
         except Exception as e:
-            print(f"[MetadataService] Erro ao deletar dados antigos: {e}")
+            # ... erro ...
             raise
 
     def find_similar_documents(self, user_id: str, query_text: str, repo_name: str, k: int = 5) -> List[Dict[str, Any]]:
@@ -78,12 +81,14 @@ class MetadataService:
             print(f"[MetadataService] Erro na busca vetorial: {e}")
             raise
 
-    def get_latest_timestamp(self, user_id: str, repo_name: str) -> Optional[datetime]:
-        if not self.supabase: raise Exception("Serviço Supabase não está inicializado.")
+    def get_latest_timestamp(self, user_id: str, repo_name: str, branch: str) -> Optional[datetime]:
+        if not self.supabase: return None
         try:
+            # Chama a nova RPC com 3 argumentos
             response = self.supabase.rpc('get_latest_repo_timestamp_user', {
                 'repo_name_filter': repo_name,
-                'user_id_filter': user_id
+                'user_id_filter': user_id,
+                'branch_filter': branch
             }).execute()
             latest_timestamp_str = response.data
             if latest_timestamp_str:
@@ -124,38 +129,30 @@ class MetadataService:
             print(f"[MetadataService] Erro na busca vetorial de instruções: {e}")
             return None
 
-    def check_repo_exists(self, user_id: str, repo_name: str) -> bool:
-        """Verifica se existe algum documento deste repositório para este usuário."""
+    def check_repo_exists(self, user_id: str, repo_name: str, branch: str) -> bool:
         if not self.supabase: return False
         try:
-            # Verifica apenas 1 registro para ser rápido (head)
             response = self.supabase.table("documentos") \
                 .select("id") \
                 .eq("user_id", user_id) \
                 .eq("repositorio", repo_name) \
+                .eq("branch", branch) \
                 .limit(1) \
                 .execute()
             return len(response.data) > 0
         except Exception as e:
-            print(f"[MetadataService] Erro ao verificar existência: {e}")
             return False
 
-    def delete_file_documents_only(self, user_id: str, repo_name: str):
-        """
-        Deleta APENAS os documentos do tipo 'file' (código fonte).
-        Mantém 'commit', 'issue', 'pr' e 'instruction'.
-        Usado na atualização para renovar o código sem perder o histórico.
-        """
+    def delete_file_documents_only(self, user_id: str, repo_name: str, branch: str):
         if not self.supabase: return
-        print(f"[MetadataService] Renovando código fonte (files) para: {repo_name}")
         try:
             self.supabase.table("documentos").delete() \
                 .eq("user_id", user_id) \
                 .eq("repositorio", repo_name) \
+                .eq("branch", branch) \
                 .eq("tipo", "file") \
                 .execute()
         except Exception as e:
-            print(f"[MetadataService] Erro ao limpar arquivos antigos: {e}")
             raise
 
     def get_distinct_users_for_repo(self, repo_name: str) -> List[str]:

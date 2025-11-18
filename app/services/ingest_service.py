@@ -62,58 +62,65 @@ class IngestService:
         self,
         user_id: str,
         repo_url: str,
-        issues_limit: int = 50,
-        prs_limit: int = 20,
-        commits_limit: int = 30,
-        max_depth: int = 10,
+        issues_limit: int,
+        prs_limit: int,
+        commits_limit: int,
+        max_depth: int,
     ) -> Dict[str, Any]:
         print(f"[IngestService] Iniciando ingestão (User: {user_id}) de: {repo_url}")
         try:
-            repo_name = self.github_service.parse_repo_url(repo_url)
+            # 1. Parse da URL para obter Nome e Branch
+            repo_name, branch = self.github_service.parse_repo_url(repo_url)
             
-            # --- LÓGICA DE INGESTÃO INTELIGENTE ---
+            # Se a URL não tiver branch (ex: /tree/dev), assumimos 'main'
+            if not branch:
+                branch = "main"
             
-            # 1. Verifica se o repositório já existe no banco
-            exists = self.metadata_service.check_repo_exists(user_id, repo_name)
+            print(f"[IngestService] Repositório: {repo_name} | Branch: {branch}")
+
+            # 2. Lógica Incremental Inteligente por Branch
+            exists = self.metadata_service.check_repo_exists(user_id, repo_name, branch)
             latest_timestamp = None
             tipo_ingestao = "COMPLETA"
 
             if exists:
-                print(f"[IngestService] Repositório {repo_name} encontrado. Verificando atualizações...")
-                # Tenta pegar a data do último item salvo para fazer o delta
-                latest_timestamp = self.metadata_service.get_latest_timestamp(user_id, repo_name)
+                print(f"[IngestService] Branch '{branch}' encontrada no banco. Verificando atualizações...")
+                # Busca a data do último commit/issue/pr SALVO NESTA BRANCH
+                latest_timestamp = self.metadata_service.get_latest_timestamp(user_id, repo_name, branch)
                 
                 if latest_timestamp:
                     tipo_ingestao = "INCREMENTAL"
-                    print(f"[IngestService] Modo INCREMENTAL ativado. Buscando dados desde: {latest_timestamp}")
+                    print(f"[IngestService] Modo INCREMENTAL ativado. Buscando dados novos a partir de: {latest_timestamp}")
                 else:
-                    print("[IngestService] AVISO: Repositório existe mas sem data válida. Forçando ingestão completa.")
+                    print("[IngestService] AVISO: Branch existe mas sem data válida. Forçando ingestão completa.")
 
-                # Na atualização, deletamos APENAS o código antigo ('file') para substituir pelo novo.
-                # O histórico (commits, issues, PRs) é mantido e apenas adicionamos os novos.
-                self.metadata_service.delete_file_documents_only(user_id, repo_name)
+                # Na atualização, deletamos APENAS os arquivos de código ('file') desta branch 
+                # para substituir pelo snapshot atual. O histórico é preservado.
+                self.metadata_service.delete_file_documents_only(user_id, repo_name, branch)
             
             else:
-                print(f"[IngestService] Primeira vez ingerindo {repo_name}. Modo COMPLETO.")
-                # Se é a primeira vez (ou estava corrompido), limpa TUDO para garantir.
-                self.metadata_service.delete_documents_by_repo(user_id, repo_name)
+                print(f"[IngestService] Primeira vez ingerindo a branch '{branch}'. Modo COMPLETO.")
+                # Garante limpeza total desta branch específica para evitar dados órfãos
+                self.metadata_service.delete_documents_by_repo(user_id, repo_name, branch)
 
-            # 2. Busca Arquivos (Sempre pega o snapshot atual do código)
-            files = self.github_service.get_repo_files_batch(repo_url, max_depth)
+            # 3. Busca Arquivos (Código Fonte)
+            # Sempre baixamos o estado atual dos arquivos da branch especificada
+            files = self.github_service.get_repo_files_batch(repo_url, max_depth, branch=branch)
             
-            # 3. Busca Metadados (Se incremental, usa 'since' para trazer só os novos)
+            # 4. Busca Metadados (Commits, Issues, PRs)
+            # Se for incremental, 'since' faz a API trazer apenas o delta
             metadata = self.github_service.get_repo_data_batch(
-                repo_url, issues_limit, prs_limit, commits_limit, since=latest_timestamp
+                repo_url, issues_limit, prs_limit, commits_limit, since=latest_timestamp, branch=branch
             )
             
             if not files and not metadata["commits"] and not metadata["issues"] and not metadata["prs"]:
                 print("[IngestService] Nenhum dado novo encontrado no GitHub.")
-                return {"status": "atualizado_sem_mudancas", "repo": repo_name, "arquivos": 0, "chunks": 0}
+                return {"status": "atualizado_sem_mudancas", "repo": repo_name, "branch": branch, "arquivos": 0, "chunks": 0}
 
             all_documents = []
             
-            # 4. Processamento de Arquivos
-            print(f"[IngestService] Processando {len(files)} arquivos de código atuais...")
+            # 5. Processamento de Arquivos
+            print(f"[IngestService] Processando {len(files)} arquivos de código da branch {branch}...")
             for file_data in files:
                 file_content = file_data.get("content", "")
                 chunks = self.text_splitter.split_text(file_content)
@@ -121,38 +128,42 @@ class IngestService:
                 for chunk in chunks:
                     if not chunk.strip(): continue
                     
+                    # IMPORTANTE: Passamos a branch para o documento
                     doc = self._create_document_chunk(
                         user_id=user_id,
                         repo_name=repo_name,
                         file_path=file_data["file_path"],
-                        chunk_content=chunk
+                        chunk_content=chunk,
+                        branch=branch 
                     )
                     all_documents.append(doc)
             
-            # 5. Processamento de Metadados
-            # Se for incremental, 'metadata' contém apenas os itens novos retornados pelo GitHub
+            # 6. Processamento de Metadados
             count_commits = len(metadata.get('commits', []))
             count_issues = len(metadata.get('issues', []))
             print(f"[IngestService] Processando {count_commits} commits e {count_issues} issues novos...")
             
-            metadata_docs = self._create_metadata_documents(user_id, repo_name, metadata)
+            # IMPORTANTE: Passamos a branch para os metadados
+            metadata_docs = self._create_metadata_documents(user_id, repo_name, metadata, branch)
             all_documents.extend(metadata_docs)
 
             total_chunks = len(all_documents)
-            print(f"[IngestService] Total de {total_chunks} chunks para salvar.")
+            print(f"[IngestService] Total de {total_chunks} chunks para salvar no Supabase.")
             
-            # 6. Salva em lotes
+            # 7. Salvamento em Lotes
             batch_size = 50 
             for i in range(0, total_chunks, batch_size):
                 batch = all_documents[i : i + batch_size]
                 self.metadata_service.save_documents_batch(user_id, batch)
                 print(f"[IngestService] Lote {i//batch_size + 1} salvo.")
 
-            print(f"[IngestService] Ingestão {tipo_ingestao} de {repo_name} concluída.")
+            print(f"[IngestService] Ingestão {tipo_ingestao} de {repo_name} ({branch}) concluída.")
+            
             return {
                 "status": "sucesso",
                 "tipo": tipo_ingestao,
                 "repo": repo_name,
+                "branch": branch,
                 "arquivos_processados": len(files),
                 "novos_metadados": len(metadata_docs),
                 "chunks_gerados": total_chunks,
@@ -164,36 +175,79 @@ class IngestService:
             raise
 
     def _create_document_chunk(
-        self, user_id: str, repo_name: str, file_path: str, chunk_content: str
+        self, user_id: str, repo_name: str, file_path: str, chunk_content: str, branch: str
     ) -> Dict[str, Any]:
         return {
-            "user_id": user_id, "repositorio": repo_name,
-            "file_path": file_path, "conteudo": chunk_content, "tipo": "file"
+            "user_id": user_id, 
+            "repositorio": repo_name,
+            "branch": branch, # <--- Branch adicionada
+            "file_path": file_path, 
+            "conteudo": chunk_content, 
+            "tipo": "file"
         }
 
-    def _create_metadata_documents(self, user_id: str, repo_name: str, raw_data: Dict[str, List]) -> List[Dict[str, Any]]:
+    def _create_metadata_documents(
+        self, 
+        user_id: str, 
+        repo_name: str, 
+        raw_data: Dict[str, List], 
+        branch: str
+    ) -> List[Dict[str, Any]]:
         documentos = []
+        
+        # Processa Commits
         for item in raw_data.get("commits", []):
             conteudo = f"Commit de {item.get('author', 'N/A')}: {item.get('message', '')}"
             documentos.append({
-                "user_id": user_id, "repositorio": repo_name, "tipo": "commit",
-                "metadados": {"sha": item['sha'], "autor": item['author'], "data": item['date'], "url": item['url']},
+                "user_id": user_id, 
+                "repositorio": repo_name, 
+                "branch": branch,  # <--- Branch adicionada
+                "tipo": "commit",
+                "metadados": {
+                    "sha": item['sha'], 
+                    "autor": item['author'], 
+                    "data": item['date'], 
+                    "url": item['url']
+                },
                 "conteudo": conteudo
             })
+            
+        # Processa Issues
         for item in raw_data.get("issues", []):
             conteudo = f"Issue #{item['id']} por {item['author']}: {item['title']}\n{item.get('body', '')}"
             documentos.append({
-                "user_id": user_id, "repositorio": repo_name, "tipo": "issue",
-                "metadados": {"id": item['id'], "autor": item['author'], "data": item['date'], "url": item['url'], "titulo": item['title']},
+                "user_id": user_id, 
+                "repositorio": repo_name, 
+                "branch": branch, # <--- Branch adicionada
+                "tipo": "issue",
+                "metadados": {
+                    "id": item['id'], 
+                    "autor": item['author'], 
+                    "data": item['date'], 
+                    "url": item['url'], 
+                    "titulo": item['title']
+                },
                 "conteudo": conteudo
             })
+            
+        # Processa Pull Requests
         for item in raw_data.get("prs", []):
             conteudo = f"PR #{item['id']} por {item['author']}: {item['title']}\n{item.get('body', '')}"
             documentos.append({
-                "user_id": user_id, "repositorio": repo_name, "tipo": "pr",
-                "metadados": {"id": item['id'], "autor": item['author'], "data": item['date'], "url": item['url'], "titulo": item['title']},
+                "user_id": user_id, 
+                "repositorio": repo_name, 
+                "branch": branch, # <--- Branch adicionada
+                "tipo": "pr",
+                "metadados": {
+                    "id": item['id'], 
+                    "autor": item['author'], 
+                    "data": item['date'], 
+                    "url": item['url'], 
+                    "titulo": item['title']
+                },
                 "conteudo": conteudo
             })
+            
         return documentos
 
     def save_instruction_document(self, user_id: str, repo_url: str, instrucao_texto: str):
