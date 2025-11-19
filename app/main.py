@@ -229,8 +229,9 @@ async def _route_intent(
 ) -> Dict[str, Any]:
     """
     Converte a saída do LLM (intenção + steps) em chamadas concretas
-    com suporte a CONTEXTO IMPLÍCITO (Last Repo).
+    com suporte a CONTEXTO IMPLÍCITO (Last Repo) e Logs TRACER.
     """
+    # Verifica serviços globais
     if not conn or not q_ingest or not q_reports or not llm_service:
         return {
             "response_type": "error",
@@ -238,7 +239,7 @@ async def _route_intent(
             "job_id": None,
         }
 
-    # 1) Intenções simples
+    # 1) Intenções simples (resposta direta)
     if intent_data["type"] == "clarify":
         return {"response_type": "clarification", "message": intent_data.get("response_text", "Não entendi."), "job_id": None}
 
@@ -246,7 +247,7 @@ async def _route_intent(
         simple_response = llm_service.generate_simple_response(intent_data.get("response_text", last_user_prompt))
         return {"response_type": "answer", "message": simple_response, "job_id": None}
 
-    # 2) Processamento de Steps
+    # 2) Processamento de Steps (Intenções Complexas)
     steps = intent_data.get("steps", [])
     print(f"[TRACER] Processando {len(steps)} intenções para User {user_id}...")
 
@@ -260,28 +261,36 @@ async def _route_intent(
         repo = args.get("repositorio")
 
         # --- LÓGICA DE CONTEXTO IMPLÍCITO ---
-        # Se a intenção precisa de repo mas ele não veio, buscamos no histórico do usuário
-        if intent in ["call_query_tool", "call_report_tool", "call_ingest_tool", "call_schedule_tool", "call_save_instruction_tool"]:
-            if not repo:
-                print(f"[TRACER] Repositório não informado na query. Buscando contexto anterior do usuário...")
-                try:
-                    # Busca direto na tabela de usuários
-                    user_data = supabase_client.table("usuarios").select("last_ingested_repo").eq("id", user_id).execute()
-                    if user_data.data and user_data.data[0]["last_ingested_repo"]:
-                        repo = user_data.data[0]["last_ingested_repo"]
-                        args["repositorio"] = repo # Atualiza para as próximas etapas
-                        print(f"[TRACER] Contexto recuperado: Usando '{repo}'")
-                    else:
-                        return {
-                            "response_type": "clarification",
-                            "message": "Não encontrei nenhum repositório no seu histórico. Qual repositório você quer usar?",
-                            "job_id": None
-                        }
-                except Exception as e:
-                    print(f"[TRACER] Erro ao buscar contexto: {e}")
-                    return {"response_type": "error", "message": "Erro ao recuperar contexto do usuário.", "job_id": None}
+        # Se a intenção exige repositório (query, report, ingest, schedule, save_instruction)
+        # e o usuário NÃO forneceu, tentamos resgatar do histórico.
+        intents_needing_repo = [
+            "call_query_tool", "call_report_tool", "call_ingest_tool", 
+            "call_schedule_tool", "call_save_instruction_tool"
+        ]
+        
+        if intent in intents_needing_repo and not repo:
+            print(f"[TRACER] Repositório não informado na query. Buscando contexto anterior do usuário...")
+            try:
+                # Busca na tabela de usuários o último repo mexido
+                # (Supõe que supabase_client é a variável global inicializada no topo do main.py)
+                user_data = supabase_client.table("usuarios").select("last_ingested_repo").eq("id", user_id).execute()
+                
+                if user_data.data and user_data.data[0].get("last_ingested_repo"):
+                    repo = user_data.data[0]["last_ingested_repo"]
+                    args["repositorio"] = repo # Atualiza o argumento para usar nas funções abaixo
+                    print(f"[TRACER] Contexto recuperado com sucesso: Usando '{repo}'")
+                else:
+                    # Se não tem histórico, pede para o usuário informar
+                    return {
+                        "response_type": "clarification",
+                        "message": "Não encontrei nenhum repositório no seu histórico recente. Por favor, informe qual repositório você deseja usar.",
+                        "job_id": None
+                    }
+            except Exception as e:
+                print(f"[TRACER] Erro ao buscar contexto implícito: {e}")
+                return {"response_type": "error", "message": "Erro ao recuperar contexto do usuário.", "job_id": None}
 
-        # ... Continua o fluxo normal ...
+        # ... Execução normal das ferramentas ...
         print(f"[TRACER] Executando Etapa {i+1}: {intent} sobre {repo}")
 
         func = None
@@ -289,6 +298,7 @@ async def _route_intent(
         target_queue = None
 
         if intent == "call_query_tool":
+            # Se for Query, retornamos para o frontend iniciar o stream
             if i == len(steps) - 1:
                 payload = {
                     "repositorio": repo,
@@ -303,7 +313,8 @@ async def _route_intent(
 
         elif intent == "call_ingest_tool":
             func = ingest_repo
-            # Passamos 1000 como limite padrão de itens para ingestão completa
+            # Usamos 1000 como limite padrão seguro
+            # Parametros: user_id, repo_url, max_items, batch_size, max_depth
             params = [user_id, repo, 1000, 20, 30]
             target_queue = q_ingest
             final_message = f"Solicitação de ingestão para {repo} recebida."
@@ -321,7 +332,7 @@ async def _route_intent(
             final_message = f"Instrução para {repo} salva."
 
         elif intent == "call_schedule_tool":
-            # ... (Lógica de agendamento mantida igual) ...
+            # Lógica de agendamento
             freq = args.get("frequencia")
             email_to_use = args.get("user_email") or user_email
             hora = args.get("hora")
@@ -337,13 +348,15 @@ async def _route_intent(
                 target_queue = q_reports
                 final_message = f"Relatório agendado para envio imediato."
             else:
-                # ... (Lógica supabase mantida) ...
+                # Agendamento recorrente vai pro Banco, não pra fila agora
                 if not hora or not tz:
-                     return { "response_type": "clarification", "message": "Faltou hora ou timezone.", "job_id": None }
+                     return { "response_type": "clarification", "message": "Para agendamento recorrente, preciso da hora (HH:MM) e timezone.", "job_id": None }
+                
                 msg = create_schedule(user_id, email_to_use, repo, args["prompt_relatorio"], freq, hora, tz)
                 final_message = msg
-                continue # Pula enfileiramento RQ pois já foi pro banco
+                continue 
 
+        # Enfileiramento genérico
         if func and target_queue:
             job = target_queue.enqueue(
                 func,
