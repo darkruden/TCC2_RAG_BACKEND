@@ -6,6 +6,7 @@ import markdown
 import uuid
 import requests
 import json
+import urllib.parse # <--- Importante para codificar a URL
 from supabase import create_client, Client
 from typing import Dict, Any, Tuple, Optional, List
 import traceback
@@ -107,25 +108,111 @@ class ReportService:
             return "error_report.html"
 
     def gerar_relatorio_html(self, user_id: str, repo_url: str, prompt: str) -> Tuple[str, str]:
-        # 1. Captura a branch
+        """
+        Gera o HTML do relatório, focando em compatibilidade com EMAIL (imagens estáticas).
+        """
         repo_name, branch = self.github_service.parse_repo_url(repo_url)
         if not branch: branch = "main"
 
         try:
-            # 2. Usa a branch no filtro
             raw_data = self.metadata_service.get_all_documents_for_repository(
                 user_id, repo_name, branch=branch
             )
-            # ... (resto igual) ...
-            llm_json_output = self.llm_service.generate_analytics_report(repo_name, prompt, raw_data)
-            html_content, filename = self.generate_html_report_content(repo_name, llm_json_output)
+            
+            # Gera análise e dados do gráfico via LLM
+            llm_output_str = self.llm_service.generate_analytics_report(repo_name, prompt, raw_data)
+            
+            # Tenta parsear o JSON da LLM
+            try:
+                llm_data = json.loads(llm_output_str)
+            except json.JSONDecodeError:
+                # Fallback se a LLM não retornar JSON puro
+                llm_data = {"analysis_markdown": llm_output_str, "chart_json": None}
+
+            # Gera o HTML final com imagem estática
+            html_content, filename = self.generate_static_html_report(repo_name, llm_data)
+            
             return html_content, filename
+
         except Exception as e:
-            print(f"[ReportService] ERRO CRÍTICO em 'gerar_relatorio_html': {e}")
+            print(f"[ReportService] Erro: {e}")
             traceback.print_exc()
             return "<html><body><h1>Erro ao gerar relatório</h1></body></html>", "error_report.html"
 
     
+    def generate_static_html_report(self, repo_name: str, llm_data: Dict[str, Any]) -> Tuple[str, str]:
+        """
+        Cria um HTML onde o gráfico é uma IMAGEM (<img>), compatível com Gmail/Outlook.
+        Usa QuickChart.io.
+        """
+        markdown_text = llm_data.get("analysis_markdown", "Sem análise.")
+        chart_config = llm_data.get("chart_json")
+        
+        html_body = markdown.markdown(markdown_text)
+        
+        # --- LÓGICA DE GRÁFICO ESTÁTICO ---
+        chart_img_tag = ""
+        if chart_config:
+            try:
+                # Garante que o config tenha fundo branco para o email
+                if 'options' not in chart_config: chart_config['options'] = {}
+                
+                # Configuração para QuickChart
+                qc_config = {
+                    "backgroundColor": "white",
+                    "width": 500,
+                    "height": 300,
+                    "devicePixelRatio": 1.0,
+                    "chart": chart_config
+                }
+                
+                # Serializa e encoda para URL
+                config_str = json.dumps(qc_config)
+                encoded_config = urllib.parse.quote(config_str)
+                chart_url = f"https://quickchart.io/chart?c={encoded_config}"
+                
+                chart_img_tag = f"""
+                <div style="margin: 20px 0; text-align: center; padding: 10px; background-color: #ffffff; border-radius: 8px;">
+                    <h3 style="color: #333;">Visualização de Dados</h3>
+                    <img src="{chart_url}" alt="Gráfico de Análise" style="max-width: 100%; height: auto; border: 1px solid #ddd;" />
+                </div>
+                """
+            except Exception as e:
+                print(f"[ReportService] Erro ao gerar URL do gráfico: {e}")
+                chart_img_tag = "<p><em>(Gráfico não pôde ser gerado)</em></p>"
+
+        # Template HTML Limpo para Email
+        template = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Relatório GitRAG</title>
+        </head>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 20px;">
+            <div style="background-color: #f6f8fa; padding: 20px; border-bottom: 1px solid #d0d7de; border-radius: 6px 6px 0 0;">
+                <h1 style="margin: 0; color: #0969da;">Relatório GitRAG</h1>
+                <p style="margin: 5px 0 0; color: #57606a;">Repositório: <strong>{repo_name}</strong></p>
+            </div>
+            
+            <div style="padding: 20px; background-color: #fff; border: 1px solid #d0d7de; border-top: none; border-radius: 0 0 6px 6px;">
+                {chart_img_tag}
+                <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+                {html_body}
+            </div>
+            
+            <div style="text-align: center; margin-top: 20px; font-size: 12px; color: #888;">
+                Gerado automaticamente por GitRAG AI
+            </div>
+        </body>
+        </html>
+        """
+        
+        unique_id = str(uuid.uuid4()).split('-')[0]
+        filename = f"{repo_name.replace('/', '_')}_report_{unique_id}.html"
+        
+        return template, filename
+
     def generate_html_report_content(
         self, 
         repo_name: str, 
