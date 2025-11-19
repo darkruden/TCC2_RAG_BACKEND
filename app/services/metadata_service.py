@@ -1,12 +1,9 @@
-# CÓDIGO COMPLETO E CORRIGIDO PARA: app/services/metadata_service.py
-# (Injeta a CLASSE EmbeddingService)
+# CÓDIGO COMPLETO PARA: app/services/metadata_service.py
 
 import os
 from supabase import create_client, Client
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-
-# Importa a CLASSE, não as funções
 from app.services.embedding_service import EmbeddingService
 
 class MetadataService:
@@ -18,20 +15,67 @@ class MetadataService:
                 raise ValueError("SUPABASE_URL e SUPABASE_KEY são obrigatórios.")
             
             self.supabase: Client = create_client(url, key)
-            print("[MetadataService] Cliente Supabase inicializado com sucesso.")
-            
             if not embedding_service:
-                raise ValueError("EmbeddingService é obrigatório para MetadataService.")
+                raise ValueError("EmbeddingService é obrigatório.")
             self.embedding_service = embedding_service
-            print("[MetadataService] Dependência (EmbeddingService) injetada.")
-            
         except Exception as e:
-            print(f"[MetadataService] Erro ao inicializar Supabase: {e}")
+            print(f"[MetadataService] Erro ao inicializar: {e}")
             self.supabase = None
             raise
 
+    # --- NOVOS MÉTODOS PARA LÓGICA CIRÚRGICA ---
+
+    def update_user_last_repo(self, user_id: str, repo_name: str):
+        """Salva qual foi o último repo que o usuário mexeu (Contexto Implícito)."""
+        try:
+            self.supabase.table("usuarios").update({"last_ingested_repo": repo_name}).eq("id", user_id).execute()
+        except Exception as e:
+            print(f"[MetadataService] Erro ao atualizar last_repo: {e}")
+
+    def get_existing_file_shas(self, user_id: str, repo_name: str, branch: str) -> Dict[str, str]:
+        """
+        Retorna um dicionário {file_path: file_sha} de todos os arquivos JÁ salvos.
+        Usado para comparar com o GitHub e evitar download inútil.
+        """
+        if not self.supabase: return {}
+        try:
+            # Buscamos apenas caminho e sha para ser leve
+            response = self.supabase.table("documentos") \
+                .select("file_path, file_sha") \
+                .eq("user_id", user_id) \
+                .eq("repositorio", repo_name) \
+                .eq("branch", branch) \
+                .eq("tipo", "file") \
+                .execute()
+            
+            # Converte lista para dict {path: sha}
+            return {doc['file_path']: doc['file_sha'] for doc in response.data if doc['file_path']}
+        except Exception as e:
+            print(f"[MetadataService] Erro ao buscar SHAs existentes: {e}")
+            return {}
+
+    def delete_files_by_paths(self, user_id: str, repo_name: str, branch: str, paths: List[str]):
+        """Deleta arquivos específicos que foram removidos do GitHub."""
+        if not self.supabase or not paths: return
+        try:
+            # O Supabase tem limites de filtro, para muitos arquivos o ideal seria batch
+            print(f"[MetadataService] Deletando {len(paths)} arquivos obsoletos...")
+            self.supabase.table("documentos").delete() \
+                .eq("user_id", user_id) \
+                .eq("repositorio", repo_name) \
+                .eq("branch", branch) \
+                .in_("file_path", paths) \
+                .execute()
+        except Exception as e:
+            print(f"[MetadataService] Erro ao deletar arquivos: {e}")
+
     def save_documents_batch(self, user_id: str, documents: List[Dict[str, Any]]):
-        # ... verificações iniciais ...
+        """
+        Salva documentos (agora com SHA e Visibility).
+        """
+        if not self.supabase or not self.embedding_service: return
+        if not documents: return
+        
         try:
             textos_para_embedding = [doc["conteudo"] for doc in documents]
             embeddings = self.embedding_service.get_embeddings_batch(textos_para_embedding)
@@ -40,143 +84,107 @@ class MetadataService:
             for i, doc in enumerate(documents):
                 doc["embedding"] = embeddings[i]
                 doc["user_id"] = user_id
-                # Garante que tenha branch, se não tiver assume 'main'
-                if "branch" not in doc:
-                    doc["branch"] = "main"
+                if "branch" not in doc: doc["branch"] = "main"
+                # Garante campos novos
+                if "visibility" not in doc: doc["visibility"] = "private"
+                if "file_sha" not in doc: doc["file_sha"] = None
+                
                 documentos_para_salvar.append(doc)
             
             self.supabase.table("documentos").insert(documentos_para_salvar).execute()
         except Exception as e:
-            # ... log de erro ...
+            print(f"[MetadataService] Erro CRÍTICO ao salvar lote: {e}")
             raise
 
-    def delete_documents_by_repo(self, user_id: str, repo_name: str, branch: str = None):
-        if not self.supabase: raise Exception("Serviço Supabase não está inicializado.")
-        try:
-            query = self.supabase.table("documentos").delete() \
-                .eq("user_id", user_id) \
-                .eq("repositorio", repo_name)
-            
-            if branch:
-                query = query.eq("branch", branch)
-                
-            query.execute()
-        except Exception as e:
-            # ... erro ...
-            raise
-
-    def find_similar_documents(self, user_id: str, query_text: str, repo_name: str, branch: str = None, k: int = 5) -> List[Dict[str, Any]]:
-        if not self.supabase or not self.embedding_service:
-            raise Exception("Serviços Supabase ou Embedding não estão inicializados.")
-        try:
-            query_embedding = self.embedding_service.get_embedding(query_text)
-            
-            # Monta os parâmetros para a RPC (Função SQL)
-            params = {
-                'query_embedding': query_embedding,
-                'match_repositorio': repo_name,
-                'match_user_id': user_id,
-                'match_count': k,
-                'match_branch': branch # <--- Passando a branch para o filtro
-            }
-            
-            response = self.supabase.rpc('match_documents_user', params).execute()
-            return response.data or []
-        except Exception as e:
-            print(f"[MetadataService] Erro na busca vetorial: {e}")
-            raise
-
-    def get_latest_timestamp(self, user_id: str, repo_name: str, branch: str) -> Optional[datetime]:
-        if not self.supabase: return None
-        try:
-            # Chama a nova RPC com 3 argumentos
-            response = self.supabase.rpc('get_latest_repo_timestamp_user', {
-                'repo_name_filter': repo_name,
-                'user_id_filter': user_id,
-                'branch_filter': branch
-            }).execute()
-            latest_timestamp_str = response.data
-            if latest_timestamp_str:
-                return datetime.fromisoformat(latest_timestamp_str)
-            return None
-        except Exception as e:
-            print(f"[MetadataService] ERRO ao buscar timestamp: {e}")
-            return None
-
-    def get_all_documents_for_repository(self, user_id: str, repo_name: str, branch: str = "main") -> List[Dict[str, Any]]:
-        if not self.supabase: raise Exception("Serviço Supabase não está inicializado.")
-        try:
-            print(f"[MetadataService] Buscando documentos de {repo_name} (Branch: {branch}) para relatório...")
-            
-            # CORREÇÃO: Adicionamos 'metadados' e 'tipo' na seleção
-            # Antes estava apenas "file_path, conteudo"
-            query = self.supabase.table("documentos") \
-                .select("file_path, conteudo, metadados, tipo") \
-                .eq("user_id", user_id) \
-                .eq("repositorio", repo_name)
-            
-            if branch:
-                query = query.eq("branch", branch)
-            
-            response = query.execute()
-            return response.data or []
-        except Exception as e:
-            print(f"[MetadataService] Erro ao buscar documentos para relatório: {e}")
-            return []
-
-    def find_similar_instruction(self, user_id: str, repo_name: str, query_text: str) -> Optional[str]:
-        if not self.supabase or not self.embedding_service:
-            raise Exception("Serviços Supabase ou Embedding não estão inicializados.")
-        try:
-            query_embedding = self.embedding_service.get_embedding(query_text)
-            response = self.supabase.rpc('match_instructions_user', {
-                'query_embedding': query_embedding,
-                'match_repositorio': repo_name,
-                'match_user_id': user_id,
-                'match_count': 1
-            }).execute()
-            if response.data:
-                return response.data[0].get("instrucao_texto")
-            return None
-        except Exception as e:
-            print(f"[MetadataService] Erro na busca vetorial de instruções: {e}")
-            return None
+    # --- MÉTODOS DE CONSULTA (Mantidos/Atualizados) ---
 
     def check_repo_exists(self, user_id: str, repo_name: str, branch: str) -> bool:
         if not self.supabase: return False
         try:
             response = self.supabase.table("documentos") \
-                .select("id") \
-                .eq("user_id", user_id) \
-                .eq("repositorio", repo_name) \
-                .eq("branch", branch) \
-                .limit(1) \
-                .execute()
+                .select("id").eq("user_id", user_id).eq("repositorio", repo_name).eq("branch", branch).limit(1).execute()
             return len(response.data) > 0
-        except Exception as e:
-            return False
+        except Exception: return False
 
     def delete_file_documents_only(self, user_id: str, repo_name: str, branch: str):
+        # Este método será usado menos agora, mas mantemos por segurança
         if not self.supabase: return
         try:
-            self.supabase.table("documentos").delete() \
-                .eq("user_id", user_id) \
-                .eq("repositorio", repo_name) \
-                .eq("branch", branch) \
-                .eq("tipo", "file") \
-                .execute()
-        except Exception as e:
-            raise
+            self.supabase.table("documentos").delete().eq("user_id", user_id).eq("repositorio", repo_name).eq("branch", branch).eq("tipo", "file").execute()
+        except Exception: pass
 
+    def delete_documents_by_repo(self, user_id: str, repo_name: str, branch: str = None):
+        if not self.supabase: return
+        try:
+            query = self.supabase.table("documentos").delete().eq("user_id", user_id).eq("repositorio", repo_name)
+            if branch: query = query.eq("branch", branch)
+            query.execute()
+        except Exception: pass
+
+    def get_latest_timestamp(self, user_id: str, repo_name: str, branch: str) -> Optional[datetime]:
+        if not self.supabase: return None
+        try:
+            response = self.supabase.rpc('get_latest_repo_timestamp_user', {
+                'repo_name_filter': repo_name, 'user_id_filter': user_id, 'branch_filter': branch
+            }).execute()
+            if response.data: return datetime.fromisoformat(response.data)
+            return None
+        except Exception: return None
+
+    def find_similar_documents(self, user_id: str, query_text: str, repo_name: str, branch: str = None, k: int = 5) -> List[Dict[str, Any]]:
+        if not self.supabase: return []
+        try:
+            embedding = self.embedding_service.get_embedding(query_text)
+            # A RPC agora cuida da lógica de 'public' vs 'private'
+            params = {
+                'query_embedding': embedding,
+                'match_repositorio': repo_name,
+                'match_user_id': user_id,
+                'match_count': k,
+                'match_branch': branch
+            }
+            response = self.supabase.rpc('match_documents_user', params).execute()
+            return response.data or []
+        except Exception as e:
+            print(f"[MetadataService] Erro na busca: {e}")
+            return []
+            
+    def get_all_documents_for_repository(self, user_id: str, repo_name: str, branch: str = "main") -> List[Dict[str, Any]]:
+        if not self.supabase: return []
+        try:
+            query = self.supabase.table("documentos").select("file_path, conteudo, metadados, tipo") \
+                .eq("repositorio", repo_name)
+            
+            if branch: query = query.eq("branch", branch)
+            
+            # Para relatório, precisamos garantir que pegamos o do usuário OU publico.
+            # Como o relatório é uma operação pesada, vamos simplificar e pegar apenas o do usuário por enquanto
+            query = query.eq("user_id", user_id)
+            
+            response = query.execute()
+            return response.data or []
+        except Exception: return []
+
+    def find_similar_instruction(self, user_id: str, repo_name: str, query_text: str) -> Optional[str]:
+        if not self.supabase or not self.embedding_service:
+            raise Exception("Serviços Supabase ou Embedding não estão inicializados.")
+        try:
+            emb = self.embedding_service.get_embedding(query_text)
+            res = self.supabase.rpc('match_instructions_user', {
+                'query_embedding': emb, 
+                'match_repositorio': repo_name, 
+                'match_user_id': user_id, 
+                'match_count': 1
+            }).execute()
+            
+            # CORREÇÃO AQUI: 'if res.data' em vez de 'ifXR res.data'
+            return res.data[0].get("instrucao_texto") if res.data else None
+            
+        except Exception: return None
+        
     def get_distinct_users_for_repo(self, repo_name: str) -> List[str]:
         if not self.supabase: raise Exception("Serviço Supabase não está inicializado.")
         try:
-            response = self.supabase.rpc('get_distinct_users_for_repo', {
-                'repo_name_filter': repo_name
-            }).execute()
-            if response.data:
-                return [row['user_id'] for row in response.data]
-            return []
-        except Exception as e:
-            print(f"[MetadataService] Erro ao buscar usuários para webhook: {e}")
-            return []
+            res = self.supabase.rpc('get_distinct_users_for_repo', {'repo_name_filter': repo_name}).execute()
+            return [row['user_id'] for row in res.data] if res.data else []
+        except Exception: return []

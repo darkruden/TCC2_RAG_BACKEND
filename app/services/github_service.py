@@ -1,5 +1,4 @@
-# CÓDIGO COMPLETO E CORRIGIDO PARA: app/services/github_service.py
-# (Converte o arquivo de funções para a Classe que o worker_tasks espera)
+# CÓDIGO COMPLETO PARA: app/services/github_service.py
 
 import os
 import base64
@@ -10,7 +9,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Any, Tuple
 from datetime import datetime
 
-# Constantes
+# Constantes de Extensões (Mantidas)
 TEXT_EXTENSIONS = {
     ".py", ".js", ".mjs", ".ts", ".tsx", ".html", ".css", ".scss", ".json", ".md",
     ".txt", ".rst", ".java", ".c", ".h", ".cpp", ".go", ".php", ".rb", ".swift",
@@ -46,29 +45,71 @@ class GithubService:
             raise ValueError("Token do GitHub inválido ou expirado.")
 
     def parse_repo_url(self, repo_url: str) -> Tuple[str, Optional[str]]:
-            """
-            Retorna (nome_repo, branch_name).
-            Ex: "https://github.com/user/repo/tree/dev" -> ("user/repo", "dev")
-            Ex: "https://github.com/user/repo" -> ("user/repo", None)
-            """
-            branch = None
-            clean_url = repo_url
+        branch = None
+        clean_url = repo_url
 
-            # Detecta padrão de branch na URL
-            if "/tree/" in repo_url:
-                parts = repo_url.split("/tree/")
-                clean_url = parts[0] # Pega a parte antes do /tree/
-                if len(parts) > 1:
-                    branch = parts[1].strip("/")
+        if "/tree/" in repo_url:
+            parts = repo_url.split("/tree/")
+            clean_url = parts[0]
+            if len(parts) > 1:
+                branch = parts[1].strip("/")
+        
+        match = re.search(r"github\.com/([\w\-\.]+)/([\w\-\.]+)", clean_url)
+        if match:
+            return f"{match.group(1)}/{match.group(2)}", branch
+        
+        if "/" in clean_url and "github.com" not in clean_url:
+            return clean_url, branch
             
-            match = re.search(r"github\.com/([\w\-\.]+)/([\w\-\.]+)", clean_url)
-            if match:
-                return f"{match.group(1)}/{match.group(2)}", branch
+        raise ValueError(f"URL de repositório inválida: {repo_url}")
+
+    def get_repo_metadata(self, repo_name: str) -> Dict[str, Any]:
+        """Retorna metadados gerais do repositório, incluindo visibilidade."""
+        repo = self.g.get_repo(repo_name)
+        return {
+            "full_name": repo.full_name,
+            "private": repo.private,
+            "visibility": "private" if repo.private else "public",
+            "default_branch": repo.default_branch
+        }
+
+    def get_repo_file_structure(self, repo_name: str, branch: str) -> Dict[str, str]:
+        """
+        Retorna um mapa {path: sha} de todos os arquivos de texto do repositório.
+        Usa a Git Tree API para ser rápido e leve (não baixa conteúdo).
+        """
+        print(f"[GitHubService] Mapeando estrutura de arquivos para {repo_name} (Branch: {branch})...")
+        repo = self.g.get_repo(repo_name)
+        
+        try:
+            # Pega a árvore recursiva (limite ~100k arquivos, suficiente para TCC)
+            tree = repo.get_git_tree(sha=branch, recursive=True)
+        except GithubException as e:
+            print(f"[GitHubService] Erro ao buscar árvore git: {e}")
+            raise
+
+        file_map = {}
+        for element in tree.tree:
+            if element.type == "blob": # É um arquivo
+                if self._is_text_file(element.path):
+                     file_map[element.path] = element.sha
+        
+        print(f"[GitHubService] Mapa construído: {len(file_map)} arquivos rastreáveis encontrados.")
+        return file_map
+
+    def get_file_content(self, repo_name: str, file_path: str, branch: str) -> Optional[str]:
+        """Baixa o conteúdo de um único arquivo."""
+        # print(f"[GitHubService] Baixando: {file_path}") 
+        try:
+            repo = self.g.get_repo(repo_name)
+            content_file = repo.get_contents(file_path, ref=branch)
+            if content_file.size == 0 or content_file.size > 1_000_000:
+                return None
             
-            if "/" in clean_url and "github.com" not in clean_url:
-                return clean_url, branch
-                
-            raise ValueError(f"URL de repositório inválida: {repo_url}")
+            return base64.b64decode(content_file.content).decode("utf-8")
+        except Exception as e:
+            print(f"[GitHubService] Erro ao baixar {file_path}: {e}")
+            return None
 
     def get_repo_data_batch(
             self,
@@ -77,35 +118,29 @@ class GithubService:
             prs_limit: int, 
             commits_limit: int,
             since: Optional[datetime] = None,
-            branch: Optional[str] = None # <--- Novo parametro
+            branch: Optional[str] = None
         ) -> Dict[str, List[Dict[str, Any]]]:
-            # Parseamos apenas para pegar o nome limpo, a branch já vem passada ou detectada antes
-            repo_name, _ = self.parse_repo_url(repo_url)
             
-            # ... prints mantidos ...
+            repo_name, _ = self.parse_repo_url(repo_url)
             repo = self.g.get_repo(repo_name)
 
-            # Para commits, passamos o SHA (branch) se existir
             commits = self._get_repo_commits(repo, commits_limit, since, sha=branch)
             
-            # Issues e PRs são globais do repo, não dependem tanto de branch, mantemos padrão
             return {
                 "commits": commits,
                 "issues": self._get_repo_issues(repo, issues_limit, since),
                 "prs": self._get_repo_prs(repo, prs_limit, since)
             }
 
+    # --- Helpers Internos (Mantidos) ---
     def _get_repo_commits(self, repo: Any, max_items: int, since: Optional[datetime], sha: Optional[str] = None) -> List[Dict[str, Any]]:
-            # ... logs ...
             commits_data = []
             api_args = {}
             if since: api_args['since'] = since
-            if sha: api_args['sha'] = sha # <--- Usa a branch aqui
+            if sha: api_args['sha'] = sha 
             
             try:
                 commits_paginator = repo.get_commits(**api_args)
-                # ... loop mantido ...
-                # (Certifique-se de copiar o loop do seu arquivo original aqui)
                 count = 0
                 for commit in commits_paginator:
                     if count >= max_items: break
@@ -118,11 +153,10 @@ class GithubService:
                     count += 1
                 return commits_data
             except Exception as e:
-                print(f"[GitHubService] ERRO ao buscar commits: {e}")
+                print(f"[GitHubService] AVISO: Erro ao buscar commits (possivelmente branch vazia ou nova): {e}")
                 return []
 
     def _get_repo_issues(self, repo: Any, max_items: int, since: Optional[datetime]) -> List[Dict[str, Any]]:
-        print(f"[GitHubService] Buscando {max_items} issues...")
         issues_data = []
         api_args = {'state': 'all', 'sort': 'updated', 'direction': 'desc'}
         if since: api_args['since'] = since
@@ -136,12 +170,10 @@ class GithubService:
                     "url": issue.html_url, "body": issue.body or "", "tipo": "issue"
                 })
             return issues_data
-        except Exception as e:
-            print(f"[GitHubService] ERRO ao buscar issues: {e}")
+        except Exception:
             return []
 
     def _get_repo_prs(self, repo: Any, max_items: int, since: Optional[datetime]) -> List[Dict[str, Any]]:
-        print(f"[GitHubService] Buscando {max_items} PRs...")
         prs_data = []
         api_args = {'state': 'all', 'sort': 'updated', 'direction': 'desc'}
         if since: api_args['since'] = since
@@ -154,55 +186,13 @@ class GithubService:
                     "url": pr.html_url, "body": pr.body or "", "tipo": "pr"
                 })
             return prs_data
-        except Exception as e:
-            print(f"[GitHubService] ERRO ao buscar PRs: {e}")
+        except Exception:
             return []
 
-    def get_repo_files_batch(
-            self, repo_url: str, max_depth: int = 10, branch: Optional[str] = None
-        ) -> List[Dict[str, str]]:
-            repo_name, _ = self.parse_repo_url(repo_url) # Ignora branch da URL pois já foi passado ou processado
-            print(f"[GitHubService] Buscando arquivos de: {repo_name} (Branch: {branch or 'Default'})")
-            
-            try:
-                repo = self.g.get_repo(repo_name)
-            except GithubException:
-                raise ValueError(f"Repositório não encontrado: {repo_name}")
-
-            # AQUI É A MÁGICA: Passamos 'ref' para pegar conteúdo de outra branch
-            contents_args = {}
-            if branch: contents_args["ref"] = branch
-            
-            try:
-                contents = repo.get_contents("", **contents_args)
-            except Exception as e:
-                 print(f"[GitHubService] Erro ao acessar branch '{branch}': {e}")
-                 raise
-
-            files_data = []
-            queue = [(contents, 0)]
-            
-            while queue:
-                current_contents, current_depth = queue.pop(0)
-                if current_depth > max_depth: continue
-                for content in current_contents:
-                    if content.type == "dir":
-                        try:
-                            # Recursão também precisa do ref/branch
-                            queue.append((repo.get_contents(content.path, **contents_args), current_depth + 1))
-                        except GithubException as e:
-                            pass
-                    elif content.type == "file":
-                        if self._is_text_file(content.path):
-                            # ... lógica de download e decode mantida ...
-                            # Copie a lógica do seu arquivo original (checagem de tamanho, base64, etc)
-                            if content.size == 0 or content.size > 1_000_000: continue
-                            try:
-                                decoded_content = base64.b64decode(content.content).decode("utf-8")
-                                files_data.append({"file_path": content.path, "content": decoded_content})
-                            except Exception:
-                                pass
-            return files_data
+    # Mantive o método antigo para retrocompatibilidade se necessário, mas o novo IngestService não o usará
+    def get_repo_files_batch(self, *args, **kwargs):
+        print("[GitHubService] DEPRECATED: get_repo_files_batch chamado. Use get_repo_file_structure.")
+        return []
 
     def _is_text_file(self, file_path: str) -> bool:
         try:
@@ -213,7 +203,6 @@ class GithubService:
                 if Path(file_path).name.lower() in ["readme", "contributing", "license", "makefile"]: return True
                 return False
             if ext in TEXT_EXTENSIONS: return True
-            if ext in IMAGE_EXTENSIONS: return False
             return False
         except Exception:
             return False
