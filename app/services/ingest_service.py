@@ -106,15 +106,22 @@ class IngestService:
 
             # D2. Baixa e Processa Novos/Modificados
             new_docs = []
+            successful_updates = 0 # Contador real
+            
             for i, path in enumerate(files_to_add_update):
-                # Se é update, removemos o antigo antes de inserir o novo (para evitar duplicata de chunks)
+                # 1. Tenta baixar primeiro
+                content = self.github.get_file_content(repo_name, path, branch)
+                
+                # Se falhar (None), pulamos e NÃO deletamos o antigo (se existir)
+                if content is None: 
+                    print(f"[IngestService] AVISO: Conteúdo vazio ou inválido para {path}. Ignorando.")
+                    continue
+
+                # 2. Se baixou com sucesso, aí sim deletamos o antigo para substituir
                 if path in db_files_map:
                      self.metadata.delete_files_by_paths(user_id, repo_name, branch, [path])
 
-                content = self.github.get_file_content(repo_name, path, branch)
-                if not content: continue
-
-                # Split em chunks
+                # 3. Processamento normal
                 chunks = self.splitter.split_text(content)
                 file_sha = github_files_map[path]
 
@@ -125,14 +132,16 @@ class IngestService:
                         "repositorio": repo_name,
                         "branch": branch,
                         "file_path": path,
-                        "file_sha": file_sha, # Salva o SHA para comparar depois
+                        "file_sha": file_sha,
                         "visibility": visibility,
                         "conteudo": chunk,
                         "tipo": "file"
                     }
                     new_docs.append(doc)
                 
-                # Salva em mini-lotes para não estourar memória se forem muitos
+                successful_updates += 1 # Conta apenas sucessos
+                
+                # Salva em mini-lotes
                 if len(new_docs) >= 50:
                     self._save_batch(user_id, new_docs)
                     new_docs = []
@@ -141,22 +150,23 @@ class IngestService:
             if new_docs:
                 self._save_batch(user_id, new_docs)
 
-            # --- LÓGICA DE MENSAGEM DE STATUS ---
-            total_changes = len(files_to_add_update) + len(files_to_delete)
-            # Verifica se houve alguma mudança em arquivos OU se houve metadados novos (meta_docs)
+            # --- LÓGICA DE MENSAGEM DE STATUS ATUALIZADA ---
+            # Agora usamos 'successful_updates' em vez do tamanho da lista bruta
+            total_changes = successful_updates + len(files_to_delete)
+            
             if total_changes == 0 and not meta_docs:
                  status_msg = f"O repositório {repo_name} já é o mais atualizado (Branch: {branch})."
             else:
-                 status_msg = f"Sincronização concluída. {len(files_to_add_update)} arquivos atualizados, {len(files_to_delete)} deletados."
+                 status_msg = f"Sincronização concluída. {successful_updates} arquivos atualizados, {len(files_to_delete)} deletados."
 
             return {
                 "status": "sucesso",
                 "repo": repo_name,
                 "branch": branch,
-                "updated": len(files_to_add_update),
+                "updated": successful_updates, # Retorna o número real
                 "deleted": len(files_to_delete),
                 "unchanged": unchanged_count,
-                "mensagem": status_msg # Essa mensagem será exibida no chat
+                "mensagem": status_msg
             }
 
         except Exception as e:
