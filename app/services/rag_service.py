@@ -36,77 +36,81 @@ class RAGService:
         sources_ui = []
 
         for i, doc in enumerate(context_docs):
-            # Extrai dados básicos
             raw_path = doc.get('file_path')
             content = doc.get('conteudo', 'N/A')
             branch = doc.get('branch', 'N/A')
-            tipo = doc.get('tipo', 'file')
             
-            # Extrai metadados (garantindo que seja um dicionário)
-            meta = doc.get('metadados') or {}
-            
-            # --- LÓGICA DE ENRIQUECIMENTO DO CONTEXTO ---
-            # Aqui preparamos o texto exato que o LLM vai ler.
-            # Colocamos URL, SHA e DATA explicitamente para ele poder citar.
-            
+            # Garante que meta é dict
+            meta = doc.get('metadados')
+            if not isinstance(meta, dict): meta = {}
+
+            # --- 1. Detecção de Tipo ---
+            tipo_original = doc.get('tipo')
+            if 'sha' in meta: 
+                tipo = 'commit'
+            elif 'titulo' in meta and 'id' in meta:
+                tipo = 'pr' if 'pr' in str(tipo_original).lower() else 'issue'
+            else:
+                tipo = 'file'
+
+            # --- 2. Extração de Dados para o Frontend ---
+            # Aqui extraímos sha e id para enviar ao React
+            sha = meta.get('sha')
+            item_id = meta.get('id')
+            url_link = meta.get('url')
+
+            # --- 3. Formatação do Contexto (Prompt) ---
             if tipo == 'commit':
-                sha_curto = meta.get('sha', 'N/A')[:7] # Pega os 7 primeiros caracteres
-                data_fmt = meta.get('data', 'N/A')
-                url_link = meta.get('url', '#')
+                sha_curto = sha[:7] if sha else 'N/A'
                 autor = meta.get('autor', 'N/A')
-                
+                data_fmt = meta.get('data', 'N/A')
                 display_name = f"Commit {sha_curto}"
                 
-                # O "Prompt do Contexto" que a IA lê:
                 context_text = (
                     f"--- DADOS DO COMMIT ---\n"
+                    f"Tipo: Commit\n"
                     f"ID (SHA): {sha_curto}\n"
                     f"Autor: {autor}\n"
                     f"Data: {data_fmt}\n"
-                    f"Link Github: {url_link}\n" # A IA usará isso para criar o link azul
+                    f"URL: {url_link}\n"
                     f"Mensagem: {content}\n"
                 )
-
             elif tipo in ['issue', 'pr']:
-                numero = meta.get('id', 'N/A')
                 titulo = meta.get('titulo', 'Sem titulo')
-                url_link = meta.get('url', '#')
                 data_fmt = meta.get('data', 'N/A')
-                
-                display_name = f"{tipo.upper()} #{numero}"
+                display_name = f"{tipo.upper()} #{item_id}"
                 
                 context_text = (
                     f"--- DADOS DA {tipo.upper()} ---\n"
-                    f"Número: #{numero}\n"
+                    f"Tipo: {tipo.upper()}\n"
+                    f"Número: #{item_id}\n"
                     f"Título: {titulo}\n"
                     f"Data: {data_fmt}\n"
-                    f"Link Github: {url_link}\n"
+                    f"URL: {url_link}\n"
                     f"Conteúdo: {content}\n"
                 )
-
             else:
-                # Arquivo de Código comum
-                display_name = raw_path or "Arquivo Desconhecido"
+                display_name = raw_path or "Arquivo"
                 content_snippet = content[:5000]
                 context_text = (
                     f"--- ARQUIVO DE CÓDIGO ---\n"
-                    f"Caminho: {raw_path}\n"
+                    f"Arquivo: {display_name}\n"
                     f"Branch: {branch}\n"
                     f"Conteúdo:\n{content_snippet}\n"
                 )
 
-            # Adiciona ao contexto final da LLM
-            context_parts.append(
-                f"--- Documento {i+1} ({display_name}) ---\n"
-                f"{context_text}"
-            )
+            context_parts.append(f"--- Documento {i+1} ({display_name}) ---\n{context_text}")
             
-            # Adiciona à lista visual do frontend
+            # --- 4. Montagem da Fonte para UI (Frontend) ---
             sources_ui.append({
                 "source_id": i + 1,
                 "file_path": display_name,
                 "branch": branch,
-                "url": meta.get('url') # Frontend pode usar se quiser
+                "url": url_link,
+                "tipo": tipo,
+                # CAMPOS CRÍTICOS PARA O SEU FRONTEND:
+                "sha": sha,    # Necessário para 'ResultadoConsulta.js' renderizar commits
+                "id": item_id  # Necessário para renderizar Issues/PRs
             })
             
         return "\n\n".join(context_parts), sources_ui
