@@ -267,6 +267,61 @@ Data Hoje: {datetime.now(pytz.timezone('America/Sao_Paulo')).strftime('%Y-%m-%d'
             return {"response": response.choices[0].message.content, "usage": response.usage}
         except Exception as e: return {"response": f"Erro: {e}", "usage": None}
 
+    def generate_rag_response(
+        self, 
+        contexto: str, 
+        prompt: str, 
+        instrucao_rag: Optional[str] = None
+    ) -> str:
+        """
+        Versão síncrona da resposta RAG.
+        """
+        # Reutiliza a lógica, mas sem stream
+        full_response = ""
+        for chunk in self.generate_rag_response_stream(contexto, prompt, instrucao_rag):
+            full_response += chunk
+        return full_response
+
+    def generate_rag_response_stream(
+        self, 
+        contexto: str, 
+        prompt: str, 
+        instrucao_rag: Optional[str] = None
+    ) -> Iterator[str]:
+        """
+        Gera resposta RAG via stream, injetando instruções personalizadas se houver.
+        """
+        if not self.client: raise Exception("LLMService não inicializado.")
+        
+        system_content = "Você é um assistente especializado em análise de código (GitRAG)."
+        if instrucao_rag:
+            system_content += f"\n\nInstrução Especial do Usuário para este repositório:\n{instrucao_rag}"
+            
+        user_content = f"""Com base EXCLUSIVAMENTE no contexto abaixo, responda à pergunta.
+Se a resposta não estiver no contexto, diga que não sabe. Não invente.
+
+--- CONTEXTO INÍCIO ---
+{contexto}
+--- CONTEXTO FIM ---
+
+Pergunta do Usuário: {prompt}
+"""
+        try:
+            stream = self.client.chat.completions.create(
+                model=self.generation_model,
+                messages=[
+                    {"role": "system", "content": system_content},
+                    {"role": "user", "content": user_content}
+                ], 
+                stream=True, 
+                temperature=0.2 
+            )
+            for chunk in stream:
+                content = chunk.choices[0].delta.content
+                if content: yield content
+        except Exception as e:
+            yield f"Erro na geração stream: {e}"
+
     def generate_response_stream(self, query: str, context: List[Dict[str, Any]]) -> Iterator[str]:
         if not self.client: raise Exception("LLMService não inicializado.")
         formatted_context = self._format_context(context)

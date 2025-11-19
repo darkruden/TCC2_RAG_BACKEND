@@ -103,12 +103,13 @@ class MetadataService:
         try:
             print(f"[MetadataService] Buscando documentos de {repo_name} (Branch: {branch}) para relatório...")
             
-            # Inicia a query
-            query = self.supabase.table("documentos").select("file_path, conteudo") \
+            # CORREÇÃO: Adicionamos 'metadados' e 'tipo' na seleção
+            # Antes estava apenas "file_path, conteudo"
+            query = self.supabase.table("documentos") \
+                .select("file_path, conteudo, metadados, tipo") \
                 .eq("user_id", user_id) \
                 .eq("repositorio", repo_name)
             
-            # Aplica o filtro de branch (se branch for None, assume main ou busca tudo se desejar, mas melhor ser específico)
             if branch:
                 query = query.eq("branch", branch)
             
