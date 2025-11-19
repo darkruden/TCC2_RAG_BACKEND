@@ -162,21 +162,34 @@ def enviar_relatorio_agendado(
 
     try:
         print(f"[WorkerTask] Salvando cópia do relatório de email no Storage: {filename}...")
+        
+        # --- CORREÇÃO AQUI ---
+        # Passamos os bytes diretamente, sem envolver em BytesIO
+        file_bytes = html_content.encode('utf-8')
+        
         supabase_client.storage.from_(SUPABASE_BUCKET_NAME).upload(
-            file=io.BytesIO(html_content.encode('utf-8')),
             path=filename,
+            file=file_bytes, 
             file_options={"content-type": "text/html"}
         )
         print(f"[WorkerTask] Upload de cópia (email job) com sucesso.")
+        
     except Exception as e:
         print(f"[WorkerTask] AVISO: Falha ao salvar cópia no Storage. {e}")
+        # Não paramos o envio do email se o backup falhar
 
     subject = f"Seu Relatório Agendado: {repo_url}"
-    send_report_email(to_email, subject, html_content)
+    
+    # Dica: Adicionamos um aviso se for email
+    html_with_warning = html_content
+    if "Chart.js" in html_content:
+        warning = "<p style='color: orange; font-size: 0.8em;'>Nota: Alguns clientes de email bloqueiam gráficos interativos. Para visualizar os gráficos completos, faça o download do anexo ou acesse pela plataforma.</p>"
+        html_with_warning = html_content.replace("<body>", f"<body>{warning}")
+
+    send_report_email(to_email, subject, html_with_warning)
     
     print(f"[WorkerTask] Relatório (agendado/once) para {to_email} concluído.")
     
-    # Retorna o filename para corrigir o bug 'download/null'
     return filename
 
 def process_webhook_payload(event_type: str, payload: dict):
