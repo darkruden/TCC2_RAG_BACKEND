@@ -77,68 +77,49 @@ class ReportService:
         prompt: str, 
         formato: str = "html"
     ) -> str:
-        print(f"[ReportService] 1. Iniciando 'gerar_e_salvar_relatorio' para User: {user_id}, Repo: {repo_url}")
+        print(f"[ReportService] Iniciando relatório (User: {user_id}) para: {repo_url}")
         
-        # CORREÇÃO: Usa self.github_service diretamente, não via metadata_service
-        repo_name = self.github_service.parse_repo_url(repo_url)
+        # 1. Captura a branch da URL
+        repo_name, branch = self.github_service.parse_repo_url(repo_url)
+        if not branch:
+            branch = "main" # Fallback seguro
         
         try:
-            print(f"[ReportService] 2. Buscando todos os documentos para {repo_name}...")
+            print(f"[ReportService] Buscando documentos da branch '{branch}'...")
+            # 2. Passa a branch para o filtro
             raw_data: List[Dict[str, Any]] = self.metadata_service.get_all_documents_for_repository(
-                user_id, repo_name
+                user_id, repo_name, branch=branch
             )
+            
             if not raw_data:
-                print(f"[ReportService] AVISO: Nenhum documento encontrado para {repo_name}.")
+                print(f"[ReportService] AVISO: Nenhum documento encontrado para {repo_name} na branch {branch}.")
+                return "error_report.html" # Ou lidar de outra forma
             
-            print(f"[ReportService] 3. Enviando {len(raw_data)} documentos para generate_analytics_report...")
-            llm_json_output: str = self.llm_service.generate_analytics_report(
-                repo_name, prompt, raw_data
-            )
-            
-            print(f"[ReportService] 4. Formatando saída da LLM para {formato}...")
-            content_string, filename, content_type = self.generate_report_content(
-                repo_name, llm_json_output, formato
-            )
-            
-            print(f"[ReportService] 5. Fazendo upload de {filename} para o Storage...")
+            # ... (restante do código segue igual: chama LLM, gera arquivo, upload) ...
+            llm_json_output = self.llm_service.generate_analytics_report(repo_name, prompt, raw_data)
+            content_string, filename, content_type = self.generate_report_content(repo_name, llm_json_output, formato)
             self.storage_service.upload_file_content(content_string, filename, content_type)
-            
-            print(f"[ReportService] 6. Relatório salvo com sucesso: {filename}")
             return filename
             
         except Exception as e:
-            print(f"[ReportService] ERRO CRÍTICO em 'gerar_e_salvar_relatorio': {e}")
+            print(f"[ReportService] ERRO CRÍTICO: {e}")
             traceback.print_exc()
             return "error_report.html"
 
-    def gerar_relatorio_html(
-        self, 
-        user_id: str, 
-        repo_url: str, 
-        prompt: str
-    ) -> Tuple[str, str]:
-        print(f"[ReportService] 1. Iniciando 'gerar_relatorio_html' (para email) para User: {user_id}, Repo: {repo_url}")
-        
-        # CORREÇÃO: Usa self.github_service diretamente
-        repo_name = self.github_service.parse_repo_url(repo_url)
+    def gerar_relatorio_html(self, user_id: str, repo_url: str, prompt: str) -> Tuple[str, str]:
+        # 1. Captura a branch
+        repo_name, branch = self.github_service.parse_repo_url(repo_url)
+        if not branch: branch = "main"
 
         try:
-            print(f"[ReportService] 2. Buscando todos os documentos para {repo_name}...")
-            raw_data = self.metadata_service.get_all_documents_for_repository(user_id, repo_name)
-            
-            print(f"[ReportService] 3. Enviando {len(raw_data)} documentos para LLM...")
-            llm_json_output = self.llm_service.generate_analytics_report(
-                repo_name, prompt, raw_data
+            # 2. Usa a branch no filtro
+            raw_data = self.metadata_service.get_all_documents_for_repository(
+                user_id, repo_name, branch=branch
             )
-            
-            print(f"[ReportService] 4. Formatando saída da LLM para HTML...")
-            html_content, filename = self.generate_html_report_content(
-                repo_name, llm_json_output, chart_image_url=None
-            )
-            
-            print(f"[ReportService] 5. Geração de HTML concluída: {filename}")
+            # ... (resto igual) ...
+            llm_json_output = self.llm_service.generate_analytics_report(repo_name, prompt, raw_data)
+            html_content, filename = self.generate_html_report_content(repo_name, llm_json_output)
             return html_content, filename
-
         except Exception as e:
             print(f"[ReportService] ERRO CRÍTICO em 'gerar_relatorio_html': {e}")
             traceback.print_exc()

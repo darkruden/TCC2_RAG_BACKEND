@@ -98,17 +98,24 @@ class MetadataService:
             print(f"[MetadataService] ERRO ao buscar timestamp: {e}")
             return None
 
-    def get_all_documents_for_repository(self, user_id: str, repo_name: str) -> List[Dict[str, Any]]:
+    def get_all_documents_for_repository(self, user_id: str, repo_name: str, branch: str = "main") -> List[Dict[str, Any]]:
         if not self.supabase: raise Exception("Serviço Supabase não está inicializado.")
         try:
-            print(f"[MetadataService] Buscando todos os documentos (User: {user_id}) de: {repo_name}")
-            response = self.supabase.table("documentos").select("file_path, conteudo") \
+            print(f"[MetadataService] Buscando documentos de {repo_name} (Branch: {branch}) para relatório...")
+            
+            # Inicia a query
+            query = self.supabase.table("documentos").select("file_path, conteudo") \
                 .eq("user_id", user_id) \
-                .eq("repositorio", repo_name) \
-                .execute()
+                .eq("repositorio", repo_name)
+            
+            # Aplica o filtro de branch (se branch for None, assume main ou busca tudo se desejar, mas melhor ser específico)
+            if branch:
+                query = query.eq("branch", branch)
+            
+            response = query.execute()
             return response.data or []
         except Exception as e:
-            print(f"[MetadataService] Erro ao buscar todos os documentos: {e}")
+            print(f"[MetadataService] Erro ao buscar documentos para relatório: {e}")
             return []
 
     def find_similar_instruction(self, user_id: str, repo_name: str, query_text: str) -> Optional[str]:
