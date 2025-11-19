@@ -141,7 +141,14 @@ class IngestService:
             if new_docs:
                 self._save_batch(user_id, new_docs)
 
-            status_msg = f"Sincronização concluída. {len(files_to_add_update)} arquivos atualizados. {unchanged_count} inalterados."
+            # --- LÓGICA DE MENSAGEM DE STATUS ---
+            total_changes = len(files_to_add_update) + len(files_to_delete)
+            # Verifica se houve alguma mudança em arquivos OU se houve metadados novos (meta_docs)
+            if total_changes == 0 and not meta_docs:
+                 status_msg = f"O repositório {repo_name} já é o mais atualizado (Branch: {branch})."
+            else:
+                 status_msg = f"Sincronização concluída. {len(files_to_add_update)} arquivos atualizados, {len(files_to_delete)} deletados."
+
             return {
                 "status": "sucesso",
                 "repo": repo_name,
@@ -149,7 +156,7 @@ class IngestService:
                 "updated": len(files_to_add_update),
                 "deleted": len(files_to_delete),
                 "unchanged": unchanged_count,
-                "mensagem": status_msg
+                "mensagem": status_msg # Essa mensagem será exibida no chat
             }
 
         except Exception as e:
