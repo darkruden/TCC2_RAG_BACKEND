@@ -1,6 +1,3 @@
-# CÓDIGO COMPLETO E CORRIGIDO PARA: app/services/llm_service.py
-# (Fix: Permite passagem de URLs completas com /tree/ para suporte a branches)
-
 import os
 import json
 import pytz
@@ -163,12 +160,9 @@ class LLMService:
             if 'timezone' not in args or not args['timezone']:
                 args['timezone'] = 'America/Sao_Paulo'
         
-        # --- CORREÇÃO CRÍTICA ---
-        # Removemos a lógica de 'parse manual' da URL aqui.
-        # Agora passamos a URL inteira para o GithubService lidar com branches.
+        # Mantém a URL intacta para o GithubService processar a branch
         if 'repositorio' in args:
             print(f"[LLMService] Repositório preservado (raw): {args['repositorio']}")
-            # A validação se é URL ou user/repo acontece no GithubService.parse_repo_url
 
         return args
 
@@ -178,12 +172,11 @@ class LLMService:
         
         print(f"[LLMService] Roteando: '{user_query}'")
         
-        # PROMPT OTIMIZADO PARA NÃO CORTRAR URLs
         system_prompt = f"""
 Você é um roteador de intenções do GitRAG.
 
 IMPORTANTE SOBRE REPOSITÓRIOS:
-1. Se o usuário fornecer uma URL (ex: 'https://github.com/user/repo/tree/dev'), passe a URL COMPLETA como argumento. NÃO TENTE EXTRAIR APENAS O NOME.
+1. Se o usuário fornecer uma URL (ex: 'https://github.com/user/repo/tree/dev'), passe a URL COMPLETA como argumento.
 2. Se fornecer apenas 'user/repo', use isso.
 3. Se não fornecer, deixe o campo vazio.
 
@@ -222,12 +215,9 @@ Data Hoje: {datetime.now(pytz.timezone('America/Sao_Paulo')).strftime('%Y-%m-%d'
             for call in tool_calls:
                 try:
                     args = json.loads(call.function.arguments)
-                    
-                    # Processa argumentos sem destruir a URL
                     args_with_fallback = self._handle_tool_call_args({
                         'function': {'name': call.function.name, 'arguments': args}
                     })
-                    
                     steps.append({
                         "intent": call.function.name,
                         "args": args_with_fallback
@@ -235,7 +225,6 @@ Data Hoje: {datetime.now(pytz.timezone('America/Sao_Paulo')).strftime('%Y-%m-%d'
                 except json.JSONDecodeError:
                     return {"type": "clarify", "response_text": "Erro ao processar argumentos."}
             
-            # Validação simples
             for step in steps:
                 if step["intent"] != "call_chat_tool":
                     required = self.tool_map[step["intent"]]["function"]["parameters"]["required"]
@@ -252,36 +241,7 @@ Data Hoje: {datetime.now(pytz.timezone('America/Sao_Paulo')).strftime('%Y-%m-%d'
             print(f"[LLMService] Erro: {e}")
             return {"type": "clarify", "response_text": f"Erro interno: {e}"}
 
-    # --- MÉTODOS DE GERAÇÃO (Mantidos) ---
-    def generate_response(self, query: str, context: List[Dict[str, Any]]) -> Dict[str, Any]:
-        if not self.client: raise Exception("LLMService não inicializado.")
-        formatted_context = self._format_context(context)
-        try:
-            response = self.client.chat.completions.create(
-                model=self.generation_model,
-                messages=[
-                    {"role": "system", "content": "Responda com base no contexto."},
-                    {"role": "user", "content": f"Contexto:\n{formatted_context}\n\nConsulta: {query}"}
-                ], temperature=0.1
-            )
-            return {"response": response.choices[0].message.content, "usage": response.usage}
-        except Exception as e: return {"response": f"Erro: {e}", "usage": None}
-
-    def generate_rag_response(
-        self, 
-        contexto: str, 
-        prompt: str, 
-        instrucao_rag: Optional[str] = None
-    ) -> str:
-        """
-        Versão síncrona da resposta RAG.
-        """
-        # Reutiliza a lógica, mas sem stream
-        full_response = ""
-        for chunk in self.generate_rag_response_stream(contexto, prompt, instrucao_rag):
-            full_response += chunk
-        return full_response
-
+    # --- MÉTODOS DE GERAÇÃO RAG (NOVOS) ---
     def generate_rag_response_stream(
         self, 
         contexto: str, 
@@ -322,24 +282,36 @@ Pergunta do Usuário: {prompt}
         except Exception as e:
             yield f"Erro na geração stream: {e}"
 
-    def generate_response_stream(self, query: str, context: List[Dict[str, Any]]) -> Iterator[str]:
-        if not self.client: raise Exception("LLMService não inicializado.")
-        formatted_context = self._format_context(context)
-        try:
-            stream = self.client.chat.completions.create(
-                model=self.generation_model,
-                messages=[
-                    {"role": "system", "content": "Responda com base no contexto."},
-                    {"role": "user", "content": f"Contexto:\n{formatted_context}\n\nConsulta: {query}"}
-                ], stream=True, temperature=0.1
-            )
-            for chunk in stream:
-                content = chunk.choices[0].delta.content
-                if content: yield content
-        except Exception as e: yield f"Erro: {e}"
+    def generate_rag_response(
+        self, 
+        contexto: str, 
+        prompt: str, 
+        instrucao_rag: Optional[str] = None
+    ) -> str:
+        """
+        Versão síncrona da resposta RAG.
+        """
+        full_response = ""
+        for chunk in self.generate_rag_response_stream(contexto, prompt, instrucao_rag):
+            full_response += chunk
+        return full_response
 
+    # --- MÉTODOS LEGADOS / UTILITÁRIOS ---
     def generate_analytics_report(self, repo_name: str, user_prompt: str, raw_data: List[Dict[str, Any]]) -> str:
-        context_json = json.dumps(raw_data)
+        # Converte apenas os campos necessários para economizar tokens
+        # Se o raw_data for muito grande, isso pode estourar o contexto.
+        # Idealmente, aqui faríamos um resumo, mas para TCC serve.
+        simplified_data = []
+        for item in raw_data:
+            if item.get('tipo') in ['commit', 'issue', 'pr']:
+                simplified_data.append({'tipo': item['tipo'], 'meta': item.get('metadados')})
+            else:
+                # Arquivos: truncamos o conteúdo
+                content = item.get('conteudo', '')[:200] + "..."
+                simplified_data.append({'tipo': 'file', 'path': item.get('file_path'), 'content_snippet': content})
+                
+        context_json = json.dumps(simplified_data)
+        
         try:
             response = self.client.chat.completions.create(
                 model=self.generation_model, 
@@ -362,7 +334,6 @@ Pergunta do Usuário: {prompt}
             return response.choices[0].message.content
         except Exception: return "👍"
 
-    # --- HELPERS ---
     def get_token_usage(self) -> Dict[str, int]: return self.token_usage
     
     def _format_requirements_data(self, requirements_data: List[Dict[str, Any]]) -> str:
@@ -377,13 +348,7 @@ Pergunta do Usuário: {prompt}
             intent = step['intent'].replace('call_', '').replace('_tool', '')
             args = step['args']
             repo = args.get('repositorio', 'N/A')
-            
-            if intent == 'ingest': plan_text += f"* Ingerir **{repo}**.\n"
-            elif intent == 'query': plan_text += f"* Consultar: '{args.get('prompt_usuario')}' in {repo}.\n"
-            elif intent == 'report': plan_text += f"* Gerar relatório (Download) de **{repo}**.\n"
-            elif intent == 'send_onetime_report': plan_text += f"* Enviar email **IMEDIATAMENTE** para **{args.get('email_destino')}** (Repo: {repo}).\n"
-            elif intent == 'schedule': plan_text += f"* Agendar envio ({args.get('frequencia')}) de **{repo}** para {args.get('user_email') or user_email}.\n"
-            elif intent == 'save_instruction': plan_text += f"* Salvar instrução para {repo}.\n"
+            plan_text += f"* Ação: {intent} em {repo}\n"
             
         return f"**Plano:**\n{plan_text}\n**Confirma?** (Sim/Não)"
 
