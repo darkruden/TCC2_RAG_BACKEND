@@ -65,17 +65,22 @@ class MetadataService:
             # ... erro ...
             raise
 
-    def find_similar_documents(self, user_id: str, query_text: str, repo_name: str, k: int = 5) -> List[Dict[str, Any]]:
+    def find_similar_documents(self, user_id: str, query_text: str, repo_name: str, branch: str = None, k: int = 5) -> List[Dict[str, Any]]:
         if not self.supabase or not self.embedding_service:
             raise Exception("Serviços Supabase ou Embedding não estão inicializados.")
         try:
             query_embedding = self.embedding_service.get_embedding(query_text)
-            response = self.supabase.rpc('match_documents_user', {
+            
+            # Monta os parâmetros para a RPC (Função SQL)
+            params = {
                 'query_embedding': query_embedding,
                 'match_repositorio': repo_name,
                 'match_user_id': user_id,
-                'match_count': k
-            }).execute()
+                'match_count': k,
+                'match_branch': branch # <--- Passando a branch para o filtro
+            }
+            
+            response = self.supabase.rpc('match_documents_user', params).execute()
             return response.data or []
         except Exception as e:
             print(f"[MetadataService] Erro na busca vetorial: {e}")
