@@ -319,6 +319,20 @@ async def _route_intent(
             target_queue = q_ingest
             final_message = f"Solicitação de ingestão para {repo} recebida."
 
+        elif intent == "call_send_onetime_report_tool":
+            print(f"[TRACER] Roteando {intent} para envio imediato via email.")
+            func = enviar_relatorio_agendado
+            # Parâmetros: schedule_id (None), email, repo, prompt, user_id
+            params = [
+                None, 
+                args.get("email_destino"), 
+                repo, 
+                args.get("prompt_relatorio"), 
+                user_id
+            ]
+            target_queue = q_reports
+            final_message = f"Iniciando envio de relatório para {args.get('email_destino')}."
+
         elif intent == "call_report_tool":
             func = processar_e_salvar_relatorio
             params = [user_id, repo, args.get("prompt_usuario"), "html"]
