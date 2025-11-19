@@ -249,16 +249,25 @@ Data Hoje: {datetime.now(pytz.timezone('America/Sao_Paulo')).strftime('%Y-%m-%d'
         instrucao_rag: Optional[str] = None
     ) -> Iterator[str]:
         """
-        Gera resposta RAG via stream, injetando instruções personalizadas se houver.
+        Gera resposta RAG via stream com formatação de links garantida.
         """
         if not self.client: raise Exception("LLMService não inicializado.")
         
-        system_content = "Você é um assistente especializado em análise de código (GitRAG)."
+        # --- PROMPT DO SISTEMA REFORÇADO PARA LINKS ---
+        system_content = """Você é um assistente especializado em análise de código (GitRAG).
+
+DIRETRIZES OBRIGATÓRIAS DE FORMATAÇÃO:
+1. CITAÇÕES CLICÁVEIS: Sempre que citar um Commit, Issue ou Pull Request, você DEVE formatá-lo como um link Markdown usando a URL fornecida no contexto.
+   - Formato para Commits: `[SHA_CURTO](URL_DO_GITHUB)`
+   - Formato para Issues/PRs: `[#NUMERO](URL_DO_GITHUB)`
+   - Exemplo: "A correção foi feita no commit [a1b2c3d](https://github.com/...)."
+
+2. PRECISÃO: Use exatamente os dados fornecidos no bloco de contexto. Não invente links.
+"""
         if instrucao_rag:
-            system_content += f"\n\nInstrução Especial do Usuário para este repositório:\n{instrucao_rag}"
+            system_content += f"\n\nInstrução Especial do Usuário:\n{instrucao_rag}"
             
         user_content = f"""Com base EXCLUSIVAMENTE no contexto abaixo, responda à pergunta.
-Se a resposta não estiver no contexto, diga que não sabe. Não invente.
 
 --- CONTEXTO INÍCIO ---
 {contexto}
