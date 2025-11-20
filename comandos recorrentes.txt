@@ -1,1 +1,0 @@
-find . -type d \( -name chroma_db -o -name venv -o -name __pycache__ -o -name .git \) -prune -o -print > Estrutura-Arvore-backend.txt

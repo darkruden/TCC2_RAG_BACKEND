@@ -87,7 +87,7 @@ class LLMService:
             "type": "function",
             "function": {
                 "name": "call_schedule_tool",
-                "description": "Agenda relatórios futuros.",
+                "description": "Agenda relatórios futuros. ATENÇÃO: O usuário fornecerá datas em formato brasileiro (dia/mês/ano). Converta SEMPRE para o padrão ISO YYYY-MM-DD.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -95,7 +95,15 @@ class LLMService:
                         "prompt_relatorio": {"type": "string", "description": "Foco do relatório."},
                         "frequencia": {"type": "string", "description": "'diariamente', 'semanalmente', 'mensalmente'."},
                         "hora": {"type": "string", "description": "Hora HH:MM."},
-                        "timezone": {"type": "string", "description": "Fuso horário."}
+                        "timezone": {"type": "string", "description": "Fuso horário (padrão: America/Sao_Paulo)."},
+                        "data_inicio": {
+                            "type": "string", 
+                            "description": "Data de início convertida EXCLUSIVAMENTE para o formato YYYY-MM-DD. Ex: se o usuário disser '04/11/2025' ou '4 de novembro', envie '2025-11-04'."
+                        },
+                        "data_fim": {
+                            "type": "string", 
+                            "description": "Data final convertida EXCLUSIVAMENTE para o formato YYYY-MM-DD. Calcule baseando-se na duração se necessário."
+                        }
                     },
                     "required": ["repositorio", "prompt_relatorio", "frequencia", "hora"]
                 }
