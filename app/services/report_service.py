@@ -4,16 +4,23 @@ import os
 import markdown
 import uuid
 import requests
-import json
-from supabase import create_client, Client
-from typing import Dict, Any, Tuple, Optional, List
+import json # <--- Importação essencial
 import traceback
+from typing import Dict, Any, Tuple, Optional, List
 
+# Template Engine
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+from premailer import transform
+
+from supabase import create_client, Client
 from app.services.metadata_service import MetadataService
 from app.services.llm_service import LLMService
 from app.services.github_service import GithubService
 
 class SupabaseStorageService:
+    """
+    Serviço para fazer upload de arquivos para o Supabase Storage.
+    """
     def __init__(self):
         self.url: str = os.getenv('SUPABASE_URL')
         self.key: str = os.getenv('SUPABASE_KEY')
@@ -38,6 +45,9 @@ class SupabaseStorageService:
             print(f"[StorageService] Exceção no upload: {e}")
 
 class ReportService:
+    """
+    Serviço de Relatórios Moderno (Jinja2 + Premailer).
+    """
     def __init__(
         self, 
         llm_service: LLMService, 
@@ -46,179 +56,144 @@ class ReportService:
     ):
         try:
             if not llm_service or not metadata_service or not github_service:
-                raise ValueError("LLMService, MetadataService e GithubService são obrigatórios.")
+                raise ValueError("Dependências obrigatórias não fornecidas.")
+                
             self.llm_service = llm_service
             self.metadata_service = metadata_service
             self.github_service = github_service
             self.storage_service = SupabaseStorageService()
+            
+            # --- CONFIGURAÇÃO DO JINJA2 ---
+            template_dir = os.path.join(os.path.dirname(__file__), '..', 'templates')
+            self.env = Environment(
+                loader=FileSystemLoader(template_dir),
+                autoescape=select_autoescape(['html', 'xml'])
+            )
+            
+            # --- CORREÇÃO CRÍTICA: ADICIONA O FILTRO 'tojson' ---
+            # Como não estamos usando Flask, precisamos ensinar o Jinja2 a fazer dump de JSON
+            def tojson_filter(value):
+                return json.dumps(value)
+                
+            self.env.filters['tojson'] = tojson_filter
+            # ----------------------------------------------------
+            
+            print(f"[ReportService] Inicializado. Templates em: {template_dir}")
+            
         except Exception as e:
             print(f"[ReportService] Erro crítico ao inicializar: {e}")
             raise
     
-    def gerar_e_salvar_relatorio(self, user_id: str, repo_url: str, prompt: str, formato: str = "html") -> str:
-        print(f"[ReportService] Iniciando relatório (Download) para: {repo_url}")
+    def _prepare_data(self, repo_url: str, prompt: str, user_id: str, branch_default="main"):
         repo_name, branch = self.github_service.parse_repo_url(repo_url)
-        if not branch: branch = "main"
+        if not branch: branch = branch_default
+        
+        raw_data = self.metadata_service.get_all_documents_for_repository(
+            user_id, repo_name, branch=branch
+        )
+        
+        if not raw_data:
+            raise ValueError(f"Nenhum documento encontrado para {repo_name}.")
+            
+        llm_output_str = self.llm_service.generate_analytics_report(repo_name, prompt, raw_data)
         
         try:
-            raw_data = self.metadata_service.get_all_documents_for_repository(user_id, repo_name, branch=branch)
-            if not raw_data: return "error_report.html"
+            llm_data = json.loads(llm_output_str)
+        except json.JSONDecodeError:
+            llm_data = {"analysis_markdown": llm_output_str, "chart_json": None}
             
-            llm_output_str = self.llm_service.generate_analytics_report(repo_name, prompt, raw_data)
-            content_string, filename, content_type = self.generate_report_content(repo_name, llm_output_str, formato)
+        return repo_name, llm_data
+
+    # --- DOWNLOAD (WEB) ---
+    def gerar_e_salvar_relatorio(self, user_id: str, repo_url: str, prompt: str, formato: str = "html") -> str:
+        print(f"[ReportService] Gerando relatório Web para: {repo_url}")
+        try:
+            repo_name, llm_data = self._prepare_data(repo_url, prompt, user_id)
             
+            if formato.lower() == "html":
+                markdown_text = llm_data.get("analysis_markdown", "")
+                html_body = markdown.markdown(markdown_text, extensions=['tables', 'fenced_code'])
+                chart_config = llm_data.get("chart_json")
+
+                template = self.env.get_template("web.html")
+                final_html = template.render(
+                    repo_name=repo_name,
+                    html_body=html_body,
+                    chart_config=chart_config
+                )
+                
+                content_string = final_html
+                content_type = "text/html; charset=utf-8"
+                ext = "html"
+            else:
+                content_string = json.dumps(llm_data)
+                content_type = "application/json; charset=utf-8"
+                ext = "json"
+            
+            unique_id = str(uuid.uuid4()).split('-')[0]
+            filename = f"{repo_name.replace('/', '_')}_report_{unique_id}.{ext}"
             self.storage_service.upload_file_content(content_string, filename, content_type)
+            
             return filename
+
         except Exception as e:
-            print(f"[ReportService] ERRO: {e}")
+            print(f"[ReportService] Erro Download: {e}")
             traceback.print_exc()
             return "error_report.html"
 
+    # --- EMAIL ---
     def gerar_relatorio_html(self, user_id: str, repo_url: str, prompt: str) -> Tuple[str, str]:
-        """Gera HTML otimizado para Email (Inline Styles + Short URL Image)."""
-        repo_name, branch = self.github_service.parse_repo_url(repo_url)
-        if not branch: branch = "main"
-
+        print(f"[ReportService] Gerando relatório Email para: {repo_url}")
         try:
-            raw_data = self.metadata_service.get_all_documents_for_repository(user_id, repo_name, branch=branch)
+            repo_name, llm_data = self._prepare_data(repo_url, prompt, user_id)
             
-            # Gera conteúdo
-            llm_output_str = self.llm_service.generate_analytics_report(repo_name, prompt, raw_data)
+            markdown_text = llm_data.get("analysis_markdown", "")
+            html_body = markdown.markdown(markdown_text, extensions=['tables'])
+            chart_config = llm_data.get("chart_json")
             
-            try:
-                llm_data = json.loads(llm_output_str)
-            except json.JSONDecodeError:
-                llm_data = {"analysis_markdown": llm_output_str, "chart_json": None}
+            short_chart_url = None
+            if chart_config:
+                short_chart_url = self._get_short_chart_url(chart_config)
 
-            # Usa o método específico para email
-            html_content, filename = self.generate_email_html_report(repo_name, llm_data)
-            return html_content, filename
+            template = self.env.get_template("email.html")
+            rendered_html = template.render(
+                repo_name=repo_name,
+                html_body=html_body,
+                chart_url=short_chart_url
+            )
+            
+            final_email_html = transform(rendered_html)
+            unique_id = str(uuid.uuid4()).split('-')[0]
+            filename = f"{repo_name.replace('/', '_')}_email_{unique_id}.html"
+            
+            return final_email_html, filename
 
         except Exception as e:
             print(f"[ReportService] Erro Email: {e}")
+            traceback.print_exc()
             return "<html><body><h1>Erro ao gerar relatório</h1></body></html>", "error.html"
 
-    # --- HELPER: Gera URL Curta do Gráfico (Crucial para Email) ---
     def _get_short_chart_url(self, chart_config: Dict[str, Any]) -> Optional[str]:
         try:
+            if not isinstance(chart_config, dict): return None
             if 'type' not in chart_config: chart_config['type'] = 'bar'
             if 'data' not in chart_config: chart_config['data'] = {'labels': [], 'datasets': []}
+            if 'options' not in chart_config: chart_config['options'] = {}
             
+            chart_config['options'].update({
+                "plugins": {
+                    "legend": {"labels": {"font": {"size": 14}}},
+                    "title": {"display": True, "text": "Análise Visual", "font": {"size": 16}}
+                }
+            })
+
             qc_payload = {
                 "chart": chart_config,
-                "width": 600,
-                "height": 350,
-                "backgroundColor": "white",
-                "format": "png"
+                "width": 600, "height": 350, "backgroundColor": "white", "format": "png"
             }
             
-            # Faz POST para obter URL curta (evita quebrar link no email)
             response = requests.post('https://quickchart.io/chart/create', json=qc_payload, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('success'):
-                    return data['url']
-            print(f"[ReportService] Falha QuickChart: {response.text}")
+            if response.status_code == 200 and response.json().get('success'):
+                return response.json()['url']
             return None
-        except Exception as e:
-            print(f"[ReportService] Erro QuickChart: {e}")
-            return None
-
-    # --- HELPER: Estilização Inline Manual ---
-    def _apply_email_styles(self, html_content: str) -> str:
-        """Injeta CSS inline nas tags HTML para garantir beleza no Gmail/Outlook."""
-        replacements = {
-            '<h1>': '<h1 style="color: #0969da; font-family: Arial, sans-serif; border-bottom: 1px solid #eee; padding-bottom: 10px;">',
-            '<h2>': '<h2 style="color: #24292f; font-family: Arial, sans-serif; margin-top: 25px;">',
-            '<h3>': '<h3 style="color: #24292f; font-family: Arial, sans-serif;">',
-            '<p>': '<p style="color: #333; font-family: Arial, sans-serif; line-height: 1.6;">',
-            '<ul>': '<ul style="color: #333; font-family: Arial, sans-serif; line-height: 1.6;">',
-            '<li>': '<li style="margin-bottom: 5px;">',
-            '<strong>': '<strong style="color: #24292f;">',
-            '<table>': '<table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px;">',
-            '<thead>': '<thead style="background-color: #f6f8fa;">',
-            '<th>': '<th style="border: 1px solid #d0d7de; padding: 8px; text-align: left;">',
-            '<td>': '<td style="border: 1px solid #d0d7de; padding: 8px;">'
-        }
-        for tag, styled_tag in replacements.items():
-            html_content = html_content.replace(tag, styled_tag)
-        return html_content
-
-    def generate_email_html_report(self, repo_name: str, llm_data: Dict[str, Any]) -> Tuple[str, str]:
-        markdown_text = llm_data.get("analysis_markdown", "Sem análise.")
-        chart_config = llm_data.get("chart_json")
-        
-        # 1. Converte Markdown para HTML cru
-        raw_html_body = markdown.markdown(markdown_text, extensions=['tables'])
-        
-        # 2. Aplica Estilos (Deixa bonito)
-        styled_html_body = self._apply_email_styles(raw_html_body)
-        
-        # 3. Gera URL do Gráfico
-        chart_img_tag = ""
-        if chart_config:
-            short_url = self._get_short_chart_url(chart_config)
-            if short_url:
-                chart_img_tag = f"""
-                <div style="margin-top: 30px; padding: 15px; background-color: #fff; border: 1px solid #eee; border-radius: 8px; text-align: center;">
-                    <h3 style="color: #333; font-family: Arial;">Visualização de Dados</h3>
-                    <img src="{short_url}" alt="Gráfico" style="max-width: 100%; height: auto;" />
-                </div>
-                """
-
-        # 4. Template Final (Texto Primeiro, Gráfico Depois)
-        template = f"""
-        <!DOCTYPE html>
-        <html>
-        <body style="font-family: Arial, sans-serif; background-color: #f4f4f4; margin: 0; padding: 20px;">
-            <div style="max-width: 800px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
-                <div style="background-color: #0969da; padding: 20px; text-align: center;">
-                    <h1 style="margin: 0; color: #ffffff; font-size: 24px;">Relatório GitRAG</h1>
-                    <p style="margin: 5px 0 0; color: #e1e4e8; font-size: 14px;">{repo_name}</p>
-                </div>
-                <div style="padding: 30px;">
-                    {styled_html_body}
-                    {chart_img_tag}
-                </div>
-                <div style="background-color: #f6f8fa; padding: 15px; text-align: center; font-size: 12px; color: #666;">
-                    Gerado automaticamente por GitRAG
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-        
-        unique_id = str(uuid.uuid4()).split('-')[0]
-        filename = f"{repo_name.replace('/', '_')}_email_{unique_id}.html"
-        return template, filename
-
-    # ... (Métodos generate_report_content e generate_html_report_content para DOWNLOAD mantidos iguais) ...
-    def generate_report_content(self, repo_name: str, content_json_str: str, format: str = "html") -> Tuple[str, str, str]:
-        # Mantém a lógica de download com Chart.js interativo
-        if format.lower() == "html":
-            content_string, filename = self.generate_html_report_content(repo_name, content_json_str)
-            return content_string, filename, "text/html; charset=utf-8"
-        else:
-            unique_id = str(uuid.uuid4()).split('-')[0]
-            filename = f"{repo_name.replace('/', '_')}_report_{unique_id}.json"
-            return content_json_str, filename, "application/json; charset=utf-8"
-
-    def generate_html_report_content(self, repo_name: str, llm_json_output: str) -> Tuple[str, str]:
-        # Implementação antiga que usa <script src="chart.js"> (Interativo para navegador)
-        # ... Copie a implementação do seu arquivo anterior aqui se quiser manter download interativo ...
-        # Para brevidade, vou colocar uma versão simplificada funcional:
-        try:
-            data = json.loads(llm_json_output)
-            md = data.get("analysis_markdown", "")
-            chart = data.get("chart_json")
-        except:
-            md = llm_json_output; chart = None
-        
-        html = markdown.markdown(md, extensions=['tables'])
-        script = ""
-        if chart:
-            script = f"<script>const c = {json.dumps(chart)}; new Chart(document.getElementById('c'), c);</script><canvas id='c'></canvas>"
-        
-        tpl = f"<html><head><script src='https://cdn.jsdelivr.net/npm/chart.js'></script></head><body><h1>{repo_name}</h1>{html}{script}</body></html>"
-        uid = str(uuid.uuid4()).split('-')[0]
-        return tpl, f"{repo_name.replace('/', '_')}_{uid}.html"
+        except: return None

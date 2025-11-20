@@ -15,4 +15,6 @@ boto3
 supabase
 requests
 sib-api-v3-sdk
-tiktoken # <-- ADICIONADO
+tiktoken 
+jinja2
+premailer

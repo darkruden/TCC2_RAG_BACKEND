@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block head_scripts %}
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% endblock %}
+
+{% block chart_area %}
+    {% if chart_config %}
+    <div class="chart-box">
+        <h3>Visualização Interativa</h3>
+        <canvas id="analyticsChart"></canvas>
+    </div>
+    {% endif %}
+{% endblock %}
+
+{% block body_scripts %}
+    {% if chart_config %}
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const ctx = document.getElementById('analyticsChart').getContext('2d');
+            // Recebe o objeto JSON direto do Python
+            const config = {{ chart_config | tojson | safe }};
+            
+            new Chart(ctx, {
+                type: config.type || 'bar',
+                data: config.data,
+                options: config.options || {}
+            });
+        });
+    </script>
+    {% endif %}
+{% endblock %}

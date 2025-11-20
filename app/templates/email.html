@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+
+{% block chart_area %}
+    {% if chart_url %}
+    <div class="chart-box">
+        <h3>Visualização de Dados</h3>
+        <img src="{{ chart_url }}" alt="Gráfico de Análise do Repositório" />
+    </div>
+    {% endif %}
+{% endblock %}
