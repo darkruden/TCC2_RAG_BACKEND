@@ -44,17 +44,18 @@ def _convert_time_to_utc(local_time_str: str, timezone_str: str) -> str:
             return "00:00:00"
 
 def create_schedule(
-    user_id: str, # <-- NOVO
+    user_id: str,
     user_email: str, 
     repo: str, 
     prompt: str, 
     freq: str, 
     hora: str, 
-    tz: str
+    tz: str,
+    data_inicio: str = None, # <-- NOVO PARÂMETRO
+    data_fim: str = None     # <-- NOVO PARÂMETRO
 ) -> str:
     """
-    Cria uma nova solicitação de agendamento e envia o email de verificação.
-    Agora vinculada a um user_id.
+    Cria uma nova solicitação de agendamento com suporte a janelas de data.
     """
     if not supabase:
         raise Exception("Serviço Supabase não está inicializado.")
@@ -76,7 +77,6 @@ def create_schedule(
             email_status = email_check.data[0]
             if email_status["verificado"]:
                 email_ja_verificado = True
-                print(f"[SchedulerService] Email {user_email} já está verificado.")
             else:
                 token = email_status["token_verificacao"]
         else:
@@ -87,13 +87,15 @@ def create_schedule(
 
         # 3. Salva o novo agendamento no banco
         novo_agendamento = {
-            "user_id": user_id, # <-- ADICIONADO
+            "user_id": user_id,
             "user_email": user_email,
             "repositorio": repo,
             "prompt_relatorio": prompt,
             "frequencia": freq,
             "hora_utc": hora_utc_str,
             "timezone": tz,
+            "data_inicio": data_inicio, # <-- Mapeado aqui (se None, o banco deixa null)
+            "data_fim": data_fim,       # <-- Mapeado aqui
             "ativo": email_ja_verificado 
         }
         
@@ -101,11 +103,14 @@ def create_schedule(
         
         # 4. Envia email de verificação (se necessário)
         if not email_ja_verificado and token:
-            print(f"[SchedulerService] Enviando email de verificação para {user_email}.")
             send_verification_email(user_email, str(token))
             return "Agendamento criado. Por favor, verifique seu email para ativar."
         else:
-            return "Agendamento criado e ativado com sucesso."
+            periodo_msg = ""
+            if data_inicio: periodo_msg += f" iniciando em {data_inicio}"
+            if data_fim: periodo_msg += f" até {data_fim}"
+            
+            return f"Agendamento criado com sucesso{periodo_msg}."
 
     except Exception as e:
         print(f"[SchedulerService] ERRO ao criar agendamento: {e}")
