@@ -146,15 +146,25 @@ def enviar_relatorio_agendado(
     to_email: str, 
     repo_url: str, 
     prompt: str, 
-    user_id: str
+    user_id: str,
+    is_first_run: bool = False # <-- NOVO PARÂMETRO (com default False para compatibilidade)
 ) -> str:
     print(f"[WorkerTask] Iniciando tarefa de envio de relatório para {to_email} (Repo: {repo_url})...")
     
     if not report_service or not supabase_client:
          raise RuntimeError("ReportService ou Supabase Client não inicializado.")
 
+    # --- INJEÇÃO DE CONTEXTO (BASELINE vs DELTA) ---
+    prompt_ajustado = prompt
+    if is_first_run:
+        print("[WorkerTask] MODO BASELINE DETECTADO: Ajustando prompt para análise completa.")
+        prompt_ajustado += "\n\n[SISTEMA: INSTRUÇÃO PRIORITÁRIA]\nEste é o PRIMEIRO relatório de acompanhamento. Ignore restrições de tempo anteriores e faça uma análise completa do ESTADO ATUAL do projeto para estabelecer uma linha de base (Baseline). Descreva a arquitetura e o estado atual do código."
+    else:
+        print("[WorkerTask] MODO DELTA DETECTADO: Ajustando prompt para foco em mudanças.")
+        prompt_ajustado += "\n\n[SISTEMA: INSTRUÇÃO PRIORITÁRIA]\nEste é um relatório de ACOMPANHAMENTO subsequente. Foque EXCLUSIVAMENTE nas novidades, alterações e progressos realizados desde o último relatório. Evite repetir descrições estáticas da arquitetura, a menos que ela tenha mudado."
+
     html_content, filename = report_service.gerar_relatorio_html(
-        user_id, repo_url, prompt
+        user_id, repo_url, prompt_ajustado # Usa o prompt turbinado
     )
     
     if not html_content or filename == "error_report.html":
@@ -188,6 +198,25 @@ def enviar_relatorio_agendado(
 
     send_report_email(to_email, subject, html_with_warning)
     
+    # --- CORREÇÃO: Atualizar o timestamp do último envio ---
+    if schedule_id:
+        try:
+            # Importar datetime e pytz se não estiverem no topo (ou usar os já importados)
+            from datetime import datetime
+            import pytz
+            
+            now_iso = datetime.now(pytz.utc).isoformat()
+            
+            # Atualiza o campo 'ultimo_envio' na tabela agendamentos
+            supabase_client.table("agendamentos") \
+                .update({"ultimo_envio": now_iso}) \
+                .eq("id", schedule_id) \
+                .execute()
+                
+            print(f"[WorkerTask] Sucesso! 'ultimo_envio' atualizado para o agendamento {schedule_id}.")
+        except Exception as e:
+            print(f"[WorkerTask] ERRO (Não-Fatal): Falha ao atualizar timestamp no banco: {e}")
+
     print(f"[WorkerTask] Relatório (agendado/once) para {to_email} concluído.")
     
     return filename

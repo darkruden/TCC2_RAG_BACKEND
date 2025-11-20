@@ -121,6 +121,9 @@ def fetch_and_queue_jobs():
 
             print(f"[Scheduler] Enfileirando relatório (User: {user_id}) para: {agendamento['user_email']}")
 
+            # Verifica se é a primeira execução (Baseline)
+            is_first_run = (ultimo_envio is None)
+
             q_reports.enqueue(
                 "worker_tasks.enviar_relatorio_agendado",
                 ag_id, # schedule_id
@@ -128,6 +131,7 @@ def fetch_and_queue_jobs():
                 agendamento["repositorio"],
                 agendamento["prompt_relatorio"],
                 user_id,
+                is_first_run, # <-- NOVO PARÂMETRO
                 job_timeout=1800,
             )
 
