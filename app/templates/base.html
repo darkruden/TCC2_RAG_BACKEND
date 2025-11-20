@@ -6,12 +6,12 @@
     <title>Relatório GitRAG: {{ repo_name }}</title>
     {% block head_scripts %}{% endblock %}
     <style>
-        /* Estilo GitHub-like limpo e profissional */
+        /* --- ESTILO BASE (CLEAN / EMAIL SAFE) --- */
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
             line-height: 1.6;
-            color: #24292f;
-            background-color: #f6f8fa;
+            color: #24292f; /* GitHub Dark Gray */
+            background-color: #f6f8fa; /* GitHub Light Gray */
             margin: 0;
             padding: 20px;
         }
@@ -22,7 +22,6 @@
             border: 1px solid #d0d7de;
             border-radius: 6px;
             overflow: hidden;
-            box-shadow: 0 3px 6px rgba(140,149,159,0.15);
         }
         .header {
             background-color: #f6f8fa;
@@ -31,12 +30,12 @@
         }
         .header h1 {
             margin: 0;
-            color: #0969da;
+            color: #0969da; /* GitHub Blue */
             font-size: 24px;
-            border: none;
+            letter-spacing: -0.5px;
         }
         .header p {
-            margin: 8px 0 0;
+            margin: 5px 0 0;
             color: #57606a;
             font-size: 14px;
         }
@@ -44,20 +43,37 @@
             padding: 32px;
             background-color: #ffffff;
         }
-        /* Formatação do Markdown */
-        .content h1, .content h2, .content h3 { margin-top: 24px; margin-bottom: 16px; font-weight: 600; line-height: 1.25; }
-        .content h1 { font-size: 2em; border-bottom: 1px solid #d0d7de; padding-bottom: .3em; }
-        .content h2 { font-size: 1.5em; border-bottom: 1px solid #d0d7de; padding-bottom: .3em; }
-        .content ul, .content ol { padding-left: 2em; }
-        .content li { margin-top: 0.25em; }
-        .content code {
-            padding: .2em .4em;
+        /* Tipografia de Conteúdo */
+        h1, h2, h3 { color: #24292f; margin-top: 24px; margin-bottom: 16px; font-weight: 600; }
+        h1 { font-size: 1.5em; border-bottom: 1px solid #d0d7de; padding-bottom: 0.3em; }
+        h2 { font-size: 1.3em; }
+        p { margin-bottom: 16px; }
+        strong { font-weight: 600; }
+        
+        /* Código (Estilo Claro para Email) */
+        code {
+            padding: 0.2em 0.4em;
             margin: 0;
             font-size: 85%;
             background-color: rgba(175,184,193,0.2);
             border-radius: 6px;
-            font-family: ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace;
+            font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
         }
+        pre {
+            padding: 16px;
+            overflow: auto;
+            font-size: 85%;
+            line-height: 1.45;
+            background-color: #f6f8fa;
+            border-radius: 6px;
+        }
+        pre code { background-color: transparent; padding: 0; }
+
+        /* Tabelas */
+        table { border-collapse: collapse; width: 100%; margin: 20px 0; }
+        th, td { border: 1px solid #d0d7de; padding: 8px 12px; text-align: left; }
+        th { background-color: #f6f8fa; font-weight: 600; }
+
         .footer {
             text-align: center;
             padding: 20px;
@@ -66,6 +82,8 @@
             background-color: #f6f8fa;
             border-top: 1px solid #d0d7de;
         }
+        
+        /* Área do Gráfico */
         .chart-box {
             margin-top: 40px;
             padding: 20px;
@@ -74,25 +92,26 @@
             text-align: center;
             background-color: #ffffff;
         }
-        .chart-box h3 { margin-top: 0; color: #24292f; font-size: 16px; }
         img { max-width: 100%; height: auto; }
+
+        /* Bloco para CSS extra (usado pelo Dark Mode) */
+        {% block extra_css %}{% endblock %}
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>Relatório de Análise</h1>
+            <h1>Relatório GitRAG</h1>
             <p>Repositório: <strong>{{ repo_name }}</strong></p>
         </div>
 
         <div class="content">
             {{ html_body | safe }}
-
             {% block chart_area %}{% endblock %}
         </div>
 
         <div class="footer">
-            Gerado automaticamente por GitRAG AI • {{ repo_name }}
+            Gerado automaticamente por GitRAG AI
         </div>
     </div>
     {% block body_scripts %}{% endblock %}

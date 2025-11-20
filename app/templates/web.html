@@ -4,11 +4,64 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 {% endblock %}
 
+{% block extra_css %}
+    /* --- SOBRESCREVENDO PARA DARK MODE (TEMA GITHUB DARK) --- */
+    body {
+        background-color: #0d1117 !important; /* Fundo da Página */
+        color: #c9d1d9 !important;
+    }
+    .container {
+        background-color: #0d1117 !important; /* Fundo do Card */
+        border-color: #30363d !important;
+        box-shadow: 0 0 20px rgba(0,0,0,0.5) !important;
+    }
+    .header {
+        background-color: #161b22 !important; /* Fundo Header */
+        border-bottom-color: #30363d !important;
+    }
+    .header h1 { color: #58a6ff !important; } /* Azul Neon */
+    .header p { color: #8b949e !important; }
+
+    .content {
+        background-color: #0d1117 !important;
+        color: #c9d1d9 !important;
+    }
+    h1, h2, h3, strong { color: #c9d1d9 !important; }
+    h1 { border-bottom-color: #21262d !important; }
+    
+    /* Código Dark */
+    code {
+        background-color: rgba(110,118,129,0.4) !important;
+        color: #c9d1d9 !important;
+    }
+    pre {
+        background-color: #161b22 !important;
+        border: 1px solid #30363d !important;
+    }
+
+    /* Tabelas Dark */
+    th, td { border-color: #30363d !important; }
+    th { background-color: #161b22 !important; color: #c9d1d9 !important; }
+
+    .footer {
+        background-color: #161b22 !important;
+        border-top-color: #30363d !important;
+        color: #8b949e !important;
+    }
+    
+    .chart-box {
+        background-color: #161b22 !important;
+        border-color: #30363d !important;
+    }
+{% endblock %}
+
 {% block chart_area %}
     {% if chart_config %}
     <div class="chart-box">
-        <h3>Visualização Interativa</h3>
-        <canvas id="analyticsChart"></canvas>
+        <h3 style="color: #c9d1d9 !important">Análise Visual</h3>
+        <div style="position: relative; height: 350px;">
+            <canvas id="analyticsChart"></canvas>
+        </div>
     </div>
     {% endif %}
 {% endblock %}
@@ -18,13 +71,27 @@
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             const ctx = document.getElementById('analyticsChart').getContext('2d');
-            // Recebe o objeto JSON direto do Python
             const config = {{ chart_config | tojson | safe }};
+            
+            // Ajusta cores do gráfico para Dark Mode dinamicamente
+            Chart.defaults.color = '#8b949e';
+            Chart.defaults.borderColor = '#30363d';
             
             new Chart(ctx, {
                 type: config.type || 'bar',
                 data: config.data,
-                options: config.options || {}
+                options: {
+                    ...config.options,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#c9d1d9' } },
+                        title: { color: '#c9d1d9', display: false }
+                    },
+                    scales: {
+                        x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } },
+                        y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } }
+                    }
+                }
             });
         });
     </script>
