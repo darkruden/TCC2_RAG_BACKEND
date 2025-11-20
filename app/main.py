@@ -321,17 +321,21 @@ async def _route_intent(
 
         elif intent == "call_send_onetime_report_tool":
             print(f"[TRACER] Roteando {intent} para envio imediato via email.")
+            
+            # Lógica de Fallback: Se o LLM não extraiu email, usa o do usuário logado
+            email_destino = args.get("email_destino") or user_email
+            
             func = enviar_relatorio_agendado
             # Parâmetros: schedule_id (None), email, repo, prompt, user_id
             params = [
                 None, 
-                args.get("email_destino"), 
+                email_destino, 
                 repo, 
                 args.get("prompt_relatorio"), 
                 user_id
             ]
             target_queue = q_reports
-            final_message = f"Iniciando envio de relatório para {args.get('email_destino')}."
+            final_message = f"Iniciando envio de relatório para {email_destino}."
 
         elif intent == "call_report_tool":
             func = processar_e_salvar_relatorio

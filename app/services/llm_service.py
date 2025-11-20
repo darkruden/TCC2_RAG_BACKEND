@@ -29,9 +29,9 @@ class LLMService:
                     "properties": {
                         "repositorio": {"type": "string", "description": "URL completa ou nome do repositório."},
                         "prompt_relatorio": {"type": "string", "description": "O assunto do relatório."},
-                        "email_destino": {"type": "string", "description": "O email para envio."},
+                        "email_destino": {"type": "string", "description": "O email para envio. Se não informado, será enviado para o próprio usuário."},
                     },
-                    "required": ["repositorio", "prompt_relatorio", "email_destino"],
+                    "required": ["repositorio", "prompt_relatorio"], # <-- email_destino removido daqui
                 },
             },
         }
