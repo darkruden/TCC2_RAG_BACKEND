@@ -330,10 +330,21 @@ Pergunta do Usuário: {prompt}
         context_json = json.dumps(simplified_data)
         
         try:
+            system_prompt = """
+Você é um analista de engenharia de software. Gere um JSON com duas chaves:
+1. 'analysis_markdown': O texto do relatório.
+2. 'chart_json': Configuração Chart.js (opcional).
+
+REGRAS CRÍTICAS:
+- Se os 'Dados' fornecidos não contiverem atividades recentes (commits/issues/PRs) compatíveis com o período solicitado no 'Prompt', SEJA HONESTO.
+- Declare explicitamente: "Não foram detectadas alterações no período analisado."
+- Não invente dados.
+- Se não houver dados para gráfico, defina 'chart_json' como null.
+"""
             response = self.client.chat.completions.create(
                 model=self.generation_model, 
                 messages=[
-                    {"role": "system", "content": "Gere um JSON com 'analysis_markdown' e 'chart_json'."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Repo: {repo_name}\nPrompt: {user_prompt}\nDados: {context_json}"}
                 ],
                 response_format={"type": "json_object"}, temperature=0.3, max_tokens=4000

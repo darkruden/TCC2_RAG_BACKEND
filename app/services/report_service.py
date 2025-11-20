@@ -92,8 +92,13 @@ class ReportService:
             user_id, repo_name, branch=branch
         )
         
+        # --- CORREÇÃO: Lidar com repositório vazio ou não indexado ---
         if not raw_data:
-            raise ValueError(f"Nenhum documento encontrado para {repo_name}.")
+            print(f"[ReportService] Nenhum dado encontrado para {repo_name}. Gerando relatório de inatividade.")
+            return repo_name, {
+                "analysis_markdown": f"## Relatório de Status\n\nNão foram encontrados dados indexados para o repositório **{repo_name}** neste momento.\n\nIsso pode indicar que:\n1. O repositório ainda não foi ingerido.\n2. O repositório está vazio.\n3. Não houve atividade recente registrada no banco de dados.",
+                "chart_json": None
+            }
             
         llm_output_str = self.llm_service.generate_analytics_report(repo_name, prompt, raw_data)
         
