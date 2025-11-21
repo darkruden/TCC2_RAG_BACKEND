@@ -107,6 +107,14 @@ class ReportService:
         except json.JSONDecodeError:
             llm_data = {"analysis_markdown": llm_output_str, "chart_json": None}
             
+        # --- NOVA CAMADA DE SANITIZAÇÃO ---
+        if llm_data.get("analysis_markdown"):
+            clean_text = llm_data["analysis_markdown"]
+            # Remove alucinações comuns de 'null'
+            clean_text = clean_text.replace("json null", "")
+            clean_text = clean_text.replace("`null`", "")
+            clean_text = clean_text.replace("```json\nnull\n```", "")
+            llm_data["analysis_markdown"] = clean_text.strip()    
         return repo_name, llm_data
 
     # --- DOWNLOAD (WEB) ---

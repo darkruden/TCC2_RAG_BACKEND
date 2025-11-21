@@ -342,10 +342,12 @@ REGRAS CRÍTICAS:
 - Se não houver dados para gráfico, defina 'chart_json' como null.
 
 REGRAS ESTRITAS DE FORMATAÇÃO (ANTI-ALUCINAÇÃO):
-1. NUNCA inclua o JSON cru do gráfico ou blocos de código (```json ... ```) dentro do texto 'analysis_markdown'.
-2. O campo 'chart_json' deve ser o ÚNICO lugar onde os dados do gráfico aparecem.
-3. No texto, refira-se ao gráfico naturalmente (ex: "Como visto na visualização acima..."), pois o sistema irá renderizar a imagem automaticamente.
-4. Se não houver dados para gráfico, defina 'chart_json' como null.
+1. NUNCA inclua JSON, 'json null', blocos de código vazios ou termos técnicos de depuração dentro do texto 'analysis_markdown'.
+2. O campo 'chart_json' deve ser o ÚNICO lugar onde dados ou status do gráfico aparecem.
+3. Se não houver dados para gráfico:
+   - Defina 'chart_json' como null.
+   - NÃO mencione o gráfico no texto. Apenas ignore a seção visual.
+4. O texto deve ser limpo, profissional e focado apenas na análise humana.
 """
             response = self.client.chat.completions.create(
                 model=self.generation_model, 
