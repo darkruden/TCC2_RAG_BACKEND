@@ -241,14 +241,27 @@ class ReportService:
                 "chart": chart_config,
                 "width": 600, 
                 "height": 350, 
-                "backgroundColor": "#161b22", # Fundo Dark (igual ao .chart-box)
-                "format": "png"
+                "backgroundColor": "#161b22", # Fundo Dark
+                "format": "png",
+                "version": "4" # <--- CORREÇÃO CRÍTICA: Força o motor Chart.js v4
             }
             
-            response = requests.post('https://quickchart.io/chart/create', json=qc_payload, timeout=5)
-            if response.status_code == 200 and response.json().get('success'):
-                return response.json()['url']
-            return None
+            print("[ReportService] Enviando payload para QuickChart...")
+            response = requests.post('https://quickchart.io/chart/create', json=qc_payload, timeout=10)
+            
+            if response.status_code != 200:
+                print(f"[ReportService] ERRO HTTP QuickChart: {response.status_code} - {response.text}")
+                return None
+                
+            resp_json = response.json()
+            if not resp_json.get('success'):
+                # Log detalhado do motivo da falha (ex: erro de sintaxe no JSON da IA)
+                print(f"[ReportService] ERRO QuickChart (Success=False): {resp_json}")
+                return None
+                
+            return resp_json['url']
+
         except Exception as e: 
-            print(f"[ReportService] Erro ao gerar gráfico: {e}")
+            print(f"[ReportService] Exceção crítica ao gerar gráfico: {e}")
+            traceback.print_exc() # Mostra a stack trace completa no log
             return None

@@ -333,7 +333,7 @@ Pergunta do Usuário: {prompt}
             system_prompt = """
 Você é um analista de engenharia de software. Gere um JSON com duas chaves:
 1. 'analysis_markdown': O texto do relatório.
-2. 'chart_json': Configuração Chart.js (opcional).
+2. 'chart_json': Objeto JSON com a configuração Chart.js (versão 4). Use 'scales: { x: {...}, y: {...} }' para os eixos.
 
 REGRAS CRÍTICAS:
 - Se os 'Dados' fornecidos não contiverem atividades recentes (commits/issues/PRs) compatíveis com o período solicitado no 'Prompt', SEJA HONESTO.
