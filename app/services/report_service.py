@@ -181,24 +181,66 @@ class ReportService:
     def _get_short_chart_url(self, chart_config: Dict[str, Any]) -> Optional[str]:
         try:
             if not isinstance(chart_config, dict): return None
+            
+            # Garante estrutura básica
             if 'type' not in chart_config: chart_config['type'] = 'bar'
             if 'data' not in chart_config: chart_config['data'] = {'labels': [], 'datasets': []}
             if 'options' not in chart_config: chart_config['options'] = {}
             
+            # --- TEMA DARK PARA O GRÁFICO (Imagem Estática) ---
+            TEXT_COLOR = '#c9d1d9'
+            GRID_COLOR = '#30363d'
+            
+            # Injeta configurações de estilo no JSON do Chart.js
+            # Isso simula o que fizemos via JavaScript no web.html
+            
+            # 1. Legendas e Títulos
             chart_config['options'].update({
                 "plugins": {
-                    "legend": {"labels": {"font": {"size": 14}}},
-                    "title": {"display": True, "text": "Análise Visual", "font": {"size": 16}}
+                    "legend": {
+                        "labels": {
+                            "color": TEXT_COLOR, 
+                            "font": {"size": 14}
+                        }
+                    },
+                    "title": {
+                        "display": True, 
+                        "text": "Análise Visual", 
+                        "color": TEXT_COLOR,
+                        "font": {"size": 16}
+                    }
                 }
             })
+            
+            # 2. Eixos (Scales)
+            # Precisamos garantir que 'scales' exista para injetar as cores
+            if 'scales' not in chart_config['options']:
+                chart_config['options']['scales'] = {}
+                
+            scales = chart_config['options']['scales']
+            
+            # Configuração padrão para eixos X e Y
+            axis_style = {
+                "grid": {"color": GRID_COLOR},
+                "ticks": {"color": "#8b949e"}
+            }
+            
+            scales['x'] = {**scales.get('x', {}), **axis_style}
+            scales['y'] = {**scales.get('y', {}), **axis_style}
 
+            # 3. Payload para QuickChart
             qc_payload = {
                 "chart": chart_config,
-                "width": 600, "height": 350, "backgroundColor": "white", "format": "png"
+                "width": 600, 
+                "height": 350, 
+                "backgroundColor": "#161b22", # Fundo Dark (igual ao .chart-box)
+                "format": "png"
             }
             
             response = requests.post('https://quickchart.io/chart/create', json=qc_payload, timeout=5)
             if response.status_code == 200 and response.json().get('success'):
                 return response.json()['url']
             return None
-        except: return None
+        except Exception as e: 
+            print(f"[ReportService] Erro ao gerar gráfico: {e}")
+            return None

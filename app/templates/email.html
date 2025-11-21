@@ -1,10 +1,61 @@
 {% extends "base.html" %}
 
+{% block extra_css %}
+    /* --- FORÇANDO DARK MODE (GITHUB DARK) PARA EMAIL --- */
+    body {
+        background-color: #0d1117 !important; /* Fundo da Página */
+        color: #c9d1d9 !important;
+    }
+    .container {
+        background-color: #0d1117 !important; /* Fundo do Card */
+        border: 1px solid #30363d !important;
+    }
+    .header {
+        background-color: #161b22 !important; /* Fundo Header */
+        border-bottom: 1px solid #30363d !important;
+    }
+    .header h1 { color: #58a6ff !important; } /* Azul Neon */
+    .header p { color: #8b949e !important; }
+
+    .content {
+        background-color: #0d1117 !important;
+        color: #c9d1d9 !important;
+    }
+    h1, h2, h3, strong { color: #c9d1d9 !important; }
+    h1 { border-bottom: 1px solid #21262d !important; }
+    
+    /* Código Dark */
+    code {
+        background-color: #161b22 !important;
+        color: #c9d1d9 !important;
+        border: 1px solid #30363d !important;
+    }
+    pre {
+        background-color: #161b22 !important;
+        border: 1px solid #30363d !important;
+    }
+
+    /* Tabelas Dark */
+    table, th, td { border-color: #30363d !important; }
+    th { background-color: #161b22 !important; color: #c9d1d9 !important; }
+
+    .footer {
+        background-color: #161b22 !important;
+        border-top: 1px solid #30363d !important;
+        color: #8b949e !important;
+    }
+    
+    .chart-box {
+        background-color: #161b22 !important;
+        border: 1px solid #30363d !important;
+    }
+{% endblock %}
+
 {% block chart_area %}
     {% if chart_url %}
     <div class="chart-box">
-        <h3>Visualização de Dados</h3>
-        <img src="{{ chart_url }}" alt="Gráfico de Análise do Repositório" />
+        <h3 style="color: #c9d1d9 !important">Visualização de Dados</h3>
+        <img src="{{ chart_url }}" alt="Gráfico de Análise" style="border: 0; max-width: 100%; height: auto;" />
     </div>
     {% endif %}
 {% endblock %}
