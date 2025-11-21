@@ -8,7 +8,7 @@ __pycache__/
 
 # Excluir testes
 /tests/
-
+docs
 # Excluir o banco vetorial local (CRÍTICO!)
 /chroma_db/
 

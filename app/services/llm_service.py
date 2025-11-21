@@ -340,6 +340,12 @@ REGRAS CRÍTICAS:
 - Declare explicitamente: "Não foram detectadas alterações no período analisado."
 - Não invente dados.
 - Se não houver dados para gráfico, defina 'chart_json' como null.
+
+REGRAS ESTRITAS DE FORMATAÇÃO (ANTI-ALUCINAÇÃO):
+1. NUNCA inclua o JSON cru do gráfico ou blocos de código (```json ... ```) dentro do texto 'analysis_markdown'.
+2. O campo 'chart_json' deve ser o ÚNICO lugar onde os dados do gráfico aparecem.
+3. No texto, refira-se ao gráfico naturalmente (ex: "Como visto na visualização acima..."), pois o sistema irá renderizar a imagem automaticamente.
+4. Se não houver dados para gráfico, defina 'chart_json' como null.
 """
             response = self.client.chat.completions.create(
                 model=self.generation_model, 
