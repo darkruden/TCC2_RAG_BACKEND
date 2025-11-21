@@ -97,7 +97,7 @@ def fetch_and_queue_jobs():
             if dt_inicio and current_date < dt_inicio:
                 continue # Ainda não começou
 
-            ifVP dt_fim and current_date > dt_fim:
+            if dt_fim and current_date > dt_fim:
                 print(f"[Scheduler] Job {ag_id} EXPIROU. Desativando...")
                 supabase.table("agendamentos").update({"ativo": False}).eq("id", ag_id).execute()
                 continue
