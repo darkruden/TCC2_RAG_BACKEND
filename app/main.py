@@ -139,6 +139,12 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[Message]
 
+# Modelo para atualização de agendamento
+class ScheduleUpdate(BaseModel):
+    titulo: Optional[str] = None
+    prompt_relatorio: Optional[str] = None
+    frequencia: Optional[str] = None
+    ativo: Optional[bool] = None
 
 class GoogleLoginRequest(BaseModel):
     credential: str  # O Access Token vindo do chrome.identity
@@ -549,6 +555,49 @@ async def google_login(request: GoogleLoginRequest):
         print(f"[Auth] Erro crítico no login: {e}")
         raise HTTPException(status_code=500, detail=f"Erro interno no servidor: {e}")
 
+@app.patch(
+    "/api/schedules/{schedule_id}",
+    response_model=Dict[str, Any],
+    dependencies=[Depends(verificar_token)],
+)
+async def update_schedule(
+    schedule_id: str, 
+    update_data: ScheduleUpdate, 
+    current_user: Dict[str, Any] = Depends(verificar_token)
+):
+    """
+    Atualiza campos de um agendamento (Título, Prompt, Frequência, Status).
+    """
+    if not supabase_client:
+        raise HTTPException(status_code=500, detail="DB não inicializado.")
+
+    user_id = current_user["id"]
+    
+    # Filtra apenas os campos que foram enviados (não nulos)
+    campos_para_atualizar = {k: v for k, v in update_data.model_dump().items() if v is not None}
+    
+    if not campos_para_atualizar:
+        raise HTTPException(status_code=400, detail="Nenhum dado para atualizar.")
+
+    try:
+        print(f"[API] Atualizando agendamento {schedule_id} para User {user_id}: {campos_para_atualizar}")
+        
+        response = (
+            supabase_client.table("agendamentos")
+            .update(campos_para_atualizar)
+            .eq("id", schedule_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+
+        if not response.data:
+             raise HTTPException(status_code=404, detail="Agendamento não encontrado ou não autorizado.")
+             
+        return response.data[0]
+
+    except Exception as e:
+        print(f"[API] Erro ao atualizar: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- ROTA DE CHAT ---
 @app.post("/api/chat", response_model=ChatResponse, dependencies=[Depends(verificar_token)])
@@ -881,7 +930,7 @@ async def get_schedules(current_user: Dict[str, Any] = Depends(verificar_token))
         response = (
             supabase_client.table("agendamentos")
             .select(
-                "id, repositorio, prompt_relatorio, frequencia, hora_utc, timezone, ultimo_envio"
+                "id, repositorio, prompt_relatorio, frequencia, hora_utc, timezone, ultimo_envio, titulo, ativo" # <-- Adicionado titulo e ativo
             )
             .eq("user_id", user_id)
             .eq("ativo", True)
