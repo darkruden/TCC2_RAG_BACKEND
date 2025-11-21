@@ -1,5 +1,5 @@
 # CÓDIGO COMPLETO E CORRIGIDO PARA: check_schedules.py
-# (Adiciona suporte a janelas de tempo: data_inicio e data_fim)
+# (Implementa lógica de "Catch-up" para não perder envios se o script atrasar)
 
 import os
 from datetime import datetime, time
@@ -25,7 +25,6 @@ try:
     print("[Scheduler] Conectado ao Redis.")
     
     QUEUE_PREFIX = os.getenv('RQ_QUEUE_PREFIX', '')
-    
     q_reports = Queue(f'{QUEUE_PREFIX}reports', connection=conn)
 
 except Exception as e:
@@ -33,111 +32,105 @@ except Exception as e:
     exit(1)
 
 def fetch_and_queue_jobs():
-    """
-    Busca no Supabase por agendamentos que precisam rodar e os enfileira.
-    Agora verifica janelas de tempo (data_inicio e data_fim).
-    """
-    print("[Scheduler] Verificando agendamentos...")
+    print("[Scheduler] Verificando agendamentos (Modo Catch-up)...")
 
     try:
-        # Data/Hora atual em UTC
         now_utc = datetime.now(pytz.utc)
-        current_date = now_utc.date() # Apenas a data (para comparações)
+        current_date = now_utc.date()
+        current_time = now_utc.time()
         
-        # Usa hora e minuto atuais (segundos fixos em 00) para bater com 'hora_utc'
-        current_utc_time_str = now_utc.strftime("%H:%M") + ":00"
+        print(f"[Scheduler] Agora (UTC): {now_utc.strftime('%Y-%m-%d %H:%M:%S')}")
 
-        print(f"[Scheduler] Hora atual (UTC): {current_utc_time_str} | Data: {current_date}")
-
-        # --- SELECT ATUALIZADO ---
+        # --- 1. BUSCA TODOS OS ATIVOS ---
+        # Removemos o filtro de hora exata (.eq("hora_utc", ...))
         response = (
             supabase.table("agendamentos")
             .select(
-                "id, user_email, repositorio, prompt_relatorio, ultimo_envio, user_id, frequencia, data_inicio, data_fim"
+                "id, user_email, repositorio, prompt_relatorio, ultimo_envio, user_id, frequencia, data_inicio, data_fim, hora_utc"
             )
             .eq("ativo", True)
-            .eq("hora_utc", current_utc_time_str)
             .execute()
         )
 
         if not response.data:
-            print("[Scheduler] Nenhum agendamento ativo encontrado para esta hora.")
+            print("[Scheduler] Nenhum agendamento ativo no sistema.")
             return
 
-        print(f"[Scheduler] Encontrados {len(response.data)} candidatos.")
+        print(f"[Scheduler] Analisando {len(response.data)} agendamentos ativos...")
         jobs_enfileirados = 0
 
         for agendamento in response.data:
             ag_id = agendamento["id"]
             freq = agendamento.get("frequencia") or "once"
-            ultimo_envio = agendamento.get("ultimo_envio")
             
-            # Parse das datas (se existirem)
+            # Converte a string do banco para objeto Time
+            # O Supabase retorna '11:00:00', pegamos os primeiros 8 chars para garantir HH:MM:SS
+            hora_alvo_str = agendamento["hora_utc"][:8] 
+            hora_alvo = datetime.strptime(hora_alvo_str, "%H:%M:%S").time()
+
+            # --- CHECAGEM 1: JÁ CHEGOU A HORA? ---
+            if current_time < hora_alvo:
+                # Ainda é cedo para este agendamento hoje
+                continue
+
+            # --- CHECAGEM 2: JÁ ENVIOU HOJE? ---
+            ultimo_envio = agendamento.get("ultimo_envio")
+            ja_enviou_hoje = False
+            
+            if ultimo_envio:
+                ultimo_envio_dt = datetime.fromisoformat(ultimo_envio.replace("Z", "+00:00"))
+                if ultimo_envio_dt.date() == current_date:
+                    ja_enviou_hoje = True
+
+            if ja_enviou_hoje:
+                # Já rodou hoje, ignora (espera amanhã)
+                continue
+
+            # --- CHECAGEM 3: JANELAS DE DATA (Lógica anterior mantida) ---
             dt_inicio = None
             dt_fim = None
-            
             if agendamento.get("data_inicio"):
                 dt_inicio = datetime.strptime(agendamento["data_inicio"], "%Y-%m-%d").date()
-                
             if agendamento.get("data_fim"):
                 dt_fim = datetime.strptime(agendamento["data_fim"], "%Y-%m-%d").date()
 
-            # --- 1. VALIDAÇÃO DE JANELA DE TEMPO ---
-            
-            # Se ainda não chegou o dia de começar
             if dt_inicio and current_date < dt_inicio:
-                print(f"[Scheduler] Job {ag_id} pulado (Inicia apenas em {dt_inicio}).")
-                continue
+                continue # Ainda não começou
 
-            # Se já passou da data final -> Desativa automaticamente (Auto-Expire)
-            if dt_fim and current_date > dt_fim:
-                print(f"[Scheduler] Job {ag_id} EXPIROU (Fim: {dt_fim}). Desativando...")
+            ifVP dt_fim and current_date > dt_fim:
+                print(f"[Scheduler] Job {ag_id} EXPIROU. Desativando...")
                 supabase.table("agendamentos").update({"ativo": False}).eq("id", ag_id).execute()
                 continue
 
-            # --- 2. VALIDAÇÃO DE FREQUÊNCIA (Lógica original) ---
-            
-            # Se já foi enviado alguma vez e a frequência é 'once', desativa.
-            if ultimo_envio and freq == "once":
-                print(f"[Scheduler] Desativando agendamento {ag_id} (frequencia=once, já executado).")
+            # --- CHECAGEM 4: FREQUÊNCIA ONCE ---
+            if freq == "once" and ultimo_envio:
+                print(f"[Scheduler] Job {ag_id} (once) já executado anteriormente. Desativando...")
                 supabase.table("agendamentos").update({"ativo": False}).eq("id", ag_id).execute()
                 continue
-
-            if ultimo_envio:
-                # Converte o timestamp salvo (que inclui data e timezone) para datetime
-                ultimo_envio_dt = datetime.fromisoformat(ultimo_envio.replace("Z", "+00:00"))
-
-                # Para frequências diárias, se já enviou hoje, pula
-                if freq == "daily" and ultimo_envio_dt.date() == current_date:
-                    print(f"[Scheduler] Pulando job {ag_id} (daily, já enviado hoje).")
-                    continue
             
-            # --- ENFILEIRAMENTO ---
+            # --- SE PASSOU POR TUDO, ENFILEIRA ---
             
             user_id = agendamento.get("user_id")
             if not user_id:
-                print(f"[Scheduler] ERRO: Pulando job {ag_id} (user_id está nulo no banco).")
+                print(f"[Scheduler] ERRO: user_id nulo para {ag_id}.")
                 continue
 
-            print(f"[Scheduler] Enfileirando relatório (User: {user_id}) para: {agendamento['user_email']}")
-
-            # Verifica se é a primeira execução (Baseline)
-            is_first_run = (ultimo_envio is None)
+            print(f"[Scheduler] >>> DISPARANDO: {agendamento['user_email']} (Era para ser às {hora_alvo_str}, agora são {current_time.strftime('%H:%M')})")
 
             q_reports.enqueue(
                 "worker_tasks.enviar_relatorio_agendado",
-                ag_id, # schedule_id
+                ag_id, 
                 agendamento["user_email"],
                 agendamento["repositorio"],
                 agendamento["prompt_relatorio"],
                 user_id,
-                is_first_run, # <-- NOVO PARÂMETRO
+                (ultimo_envio is None), # is_first_run logic
                 job_timeout=1800,
             )
 
             jobs_enfileirados += 1
 
-        print(f"[Scheduler] {jobs_enfileirados} novos jobs de relatório foram enfileirados.")
+        print(f"[Scheduler] Ciclo finalizado. {jobs_enfileirados} jobs processados.")
 
     except Exception as e:
         print(f"[Scheduler] ERRO ao buscar ou enfileirar jobs: {e}")
