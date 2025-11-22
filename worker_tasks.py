@@ -147,9 +147,38 @@ def enviar_relatorio_agendado(
     repo_url: str, 
     prompt: str, 
     user_id: str,
-    is_first_run: bool = False # <-- NOVO PARÂMETRO (com default False para compatibilidade)
+    is_first_run: bool = False
 ) -> str:
-    print(f"[WorkerTask] Iniciando tarefa de envio de relatório para {to_email} (Repo: {repo_url})...")
+    print(f"[WorkerTask] Processando job para {to_email}...")
+    
+    if not report_service or not supabase_client:
+         raise RuntimeError("Serviços não inicializados.")
+
+    # --- NOVA TRAVA DE SEGURANÇA (IDEMPOTÊNCIA) ---
+    # Se for um agendamento recorrente (tem schedule_id), verifica se já foi enviado hoje
+    # para evitar duplicidade em caso de fila acumulada.
+    if schedule_id:
+        try:
+            from datetime import datetime
+            import pytz
+            
+            # Busca o estado atual no banco
+            res = supabase_client.table("agendamentos").select("ultimo_envio").eq("id", schedule_id).execute()
+            
+            if res.data and res.data[0]["ultimo_envio"]:
+                ultimo_envio = res.data[0]["ultimo_envio"]
+                # Converte string ISO para data
+                dt_ultimo = datetime.fromisoformat(ultimo_envio.replace("Z", "+00:00")).date()
+                dt_hoje = datetime.now(pytz.utc).date()
+                
+                if dt_ultimo == dt_hoje:
+                    print(f"[WorkerTask] ABORTANDO: Agendamento {schedule_id} já foi enviado hoje ({dt_ultimo}). Ignorando tarefa duplicada da fila.")
+                    return "skipped_duplicate"
+        except Exception as e:
+            print(f"[WorkerTask] Erro ao verificar idempotência: {e}. Prosseguindo com envio.")
+    # ------------------------------------------------
+
+    print(f"[WorkerTask] Iniciando geração de relatório para {to_email} (Repo: {repo_url})...")
     
     if not report_service or not supabase_client:
          raise RuntimeError("ReportService ou Supabase Client não inicializado.")
