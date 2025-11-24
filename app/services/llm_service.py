@@ -31,16 +31,17 @@ class LLMService:
                         "prompt_relatorio": {"type": "string", "description": "O assunto do relatório."},
                         "email_destino": {"type": "string", "description": "O email para envio. Se não informado, será enviado para o próprio usuário."},
                     },
-                    "required": ["repositorio", "prompt_relatorio"], # <-- email_destino removido daqui
+                    "required": ["repositorio", "prompt_relatorio"],
                 },
             },
         }
 
+        # --- CORREÇÃO 1: Descrição mais restritiva para Ingestão ---
         self.tool_ingest = {
             "type": "function",
             "function": {
                 "name": "call_ingest_tool",
-                "description": "Ingere/Atualiza o índice do repositório.",
+                "description": "EXECUTA AÇÃO DE DOWNLOAD/ATUALIZAÇÃO. Use APENAS quando o usuário pedir explicitamente para 'atualizar', 'sincronizar', 'baixar' ou 'ingerir' novos dados.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -51,11 +52,12 @@ class LLMService:
             }
         }
         
+        # --- CORREÇÃO 2: Descrição abrangente para Query ---
         self.tool_query = {
             "type": "function",
             "function": {
                 "name": "call_query_tool",
-                "description": "Responde perguntas no chat sobre o código.",
+                "description": "Responde perguntas sobre o código, histórico, commits, arquitetura ou status atual. Use para 'qual o último commit', 'quem fez isso', 'explique tal arquivo'.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -87,7 +89,7 @@ class LLMService:
             "type": "function",
             "function": {
                 "name": "call_schedule_tool",
-                "description": "Agenda relatórios futuros. ATENÇÃO: O usuário fornecerá datas em formato brasileiro (dia/mês/ano). Converta SEMPRE para o padrão ISO YYYY-MM-DD.",
+                "description": "Agenda relatórios futuros. ATENÇÃO: Converta datas para YYYY-MM-DD.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -96,14 +98,8 @@ class LLMService:
                         "frequencia": {"type": "string", "description": "'diariamente', 'semanalmente', 'mensalmente'."},
                         "hora": {"type": "string", "description": "Hora HH:MM."},
                         "timezone": {"type": "string", "description": "Fuso horário (padrão: America/Sao_Paulo)."},
-                        "data_inicio": {
-                            "type": "string", 
-                            "description": "Data de início convertida EXCLUSIVAMENTE para o formato YYYY-MM-DD. Ex: se o usuário disser '04/11/2025' ou '4 de novembro', envie '2025-11-04'."
-                        },
-                        "data_fim": {
-                            "type": "string", 
-                            "description": "Data final convertida EXCLUSIVAMENTE para o formato YYYY-MM-DD. Calcule baseando-se na duração se necessário."
-                        }
+                        "data_inicio": {"type": "string", "description": "Data YYYY-MM-DD."},
+                        "data_fim": {"type": "string", "description": "Data YYYY-MM-DD."}
                     },
                     "required": ["repositorio", "prompt_relatorio", "frequencia", "hora"]
                 }
@@ -130,7 +126,7 @@ class LLMService:
             "type": "function",
             "function": {
                 "name": "call_chat_tool",
-                "description": "Bate-papo casual.",
+                "description": "Bate-papo casual que NÃO envolve código ou repositórios.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -168,7 +164,6 @@ class LLMService:
             if 'timezone' not in args or not args['timezone']:
                 args['timezone'] = 'America/Sao_Paulo'
         
-        # Mantém a URL intacta para o GithubService processar a branch
         if 'repositorio' in args:
             print(f"[LLMService] Repositório preservado (raw): {args['repositorio']}")
 
@@ -180,21 +175,26 @@ class LLMService:
         
         print(f"[LLMService] Roteando: '{user_query}'")
         
+        # --- CORREÇÃO 3: Prompt de Sistema Reforçado para Desambiguação ---
         system_prompt = f"""
 Você é um roteador de intenções do GitRAG.
 
-IMPORTANTE SOBRE REPOSITÓRIOS:
-1. Se o usuário fornecer uma URL (ex: 'https://github.com/user/repo/tree/dev'), passe a URL COMPLETA como argumento.
-2. Se fornecer apenas 'user/repo', use isso.
-3. Se não fornecer, deixe o campo vazio.
+DIRETRIZES DE DECISÃO (CRÍTICO):
 
-DECISÃO DE FERRAMENTAS:
-- EMAIL AGORA -> call_send_onetime_report_tool
-- AGENDAR -> call_schedule_tool
-- DOWNLOAD/RELATÓRIO -> call_report_tool
-- PERGUNTA SOBRE CÓDIGO -> call_query_tool
-- INGESTÃO/ATUALIZAR -> call_ingest_tool
-- PAPO FURADO -> call_chat_tool
+1. **PERGUNTAS SOBRE O REPOSITÓRIO** -> Use `call_query_tool`.
+   - Exemplos: "Qual o último commit?", "Quem alterou o arquivo X?", "Explique a arquitetura", "Liste as issues abertas".
+   - Contexto Implícito: Se o usuário disser "deste repositório" ou não citar repo, use `call_query_tool` e deixe o campo 'repositorio' vazio (o backend preencherá).
+   - NÃO use ingestão para responder perguntas, assuma que os dados já estão no banco.
+
+2. **AÇÕES DE ATUALIZAÇÃO/INGESTÃO** -> Use `call_ingest_tool`.
+   - Exemplos: "Atualize o repositório", "Sincronizar agora", "Baixar novos dados", "Ingerir este repo".
+   - Só use isso se for uma ORDEM de ação, não uma pergunta.
+
+3. **OUTRAS AÇÕES**:
+   - Email Agora -> `call_send_onetime_report_tool`
+   - Agendar -> `call_schedule_tool`
+   - Download Relatório -> `call_report_tool`
+   - Papo Furado -> `call_chat_tool`
 
 Data Hoje: {datetime.now(pytz.timezone('America/Sao_Paulo')).strftime('%Y-%m-%d')}.
 """
@@ -249,19 +249,10 @@ Data Hoje: {datetime.now(pytz.timezone('America/Sao_Paulo')).strftime('%Y-%m-%d'
             print(f"[LLMService] Erro: {e}")
             return {"type": "clarify", "response_text": f"Erro interno: {e}"}
 
-    # --- MÉTODOS DE GERAÇÃO RAG (NOVOS) ---
-    def generate_rag_response_stream(
-        self, 
-        contexto: str, 
-        prompt: str, 
-        instrucao_rag: Optional[str] = None
-    ) -> Iterator[str]:
-        """
-        Gera resposta RAG via stream com formatação de links garantida.
-        """
+    # ... (Restante do código: generate_rag_response_stream, etc. permanece igual) ...
+    def generate_rag_response_stream(self, contexto: str, prompt: str, instrucao_rag: Optional[str] = None) -> Iterator[str]:
         if not self.client: raise Exception("LLMService não inicializado.")
         
-        # --- PROMPT DO SISTEMA REFORÇADO PARA LINKS ---
         system_content = """Você é um assistente especializado em análise de código (GitRAG).
 
 DIRETRIZES OBRIGATÓRIAS DE FORMATAÇÃO:
@@ -299,31 +290,18 @@ Pergunta do Usuário: {prompt}
         except Exception as e:
             yield f"Erro na geração stream: {e}"
 
-    def generate_rag_response(
-        self, 
-        contexto: str, 
-        prompt: str, 
-        instrucao_rag: Optional[str] = None
-    ) -> str:
-        """
-        Versão síncrona da resposta RAG.
-        """
+    def generate_rag_response(self, contexto: str, prompt: str, instrucao_rag: Optional[str] = None) -> str:
         full_response = ""
         for chunk in self.generate_rag_response_stream(contexto, prompt, instrucao_rag):
             full_response += chunk
         return full_response
 
-    # --- MÉTODOS LEGADOS / UTILITÁRIOS ---
     def generate_analytics_report(self, repo_name: str, user_prompt: str, raw_data: List[Dict[str, Any]]) -> str:
-        # Converte apenas os campos necessários para economizar tokens
-        # Se o raw_data for muito grande, isso pode estourar o contexto.
-        # Idealmente, aqui faríamos um resumo, mas para TCC serve.
         simplified_data = []
         for item in raw_data:
             if item.get('tipo') in ['commit', 'issue', 'pr']:
                 simplified_data.append({'tipo': item['tipo'], 'meta': item.get('metadados')})
             else:
-                # Arquivos: truncamos o conteúdo
                 content = item.get('conteudo', '')[:200] + "..."
                 simplified_data.append({'tipo': 'file', 'path': item.get('file_path'), 'content_snippet': content})
                 
@@ -369,24 +347,3 @@ REGRAS ESTRITAS DE FORMATAÇÃO (ANTI-ALUCINAÇÃO):
             )
             return response.choices[0].message.content
         except Exception: return "👍"
-
-    def get_token_usage(self) -> Dict[str, int]: return self.token_usage
-    
-    def _format_requirements_data(self, requirements_data: List[Dict[str, Any]]) -> str:
-        return json.dumps(requirements_data, indent=2, ensure_ascii=False) if requirements_data else "Sem dados."
-
-    def _format_context(self, context: List[Dict[str, Any]]) -> str:
-        return "\n".join([f"---\nConteúdo: {doc.get('conteudo', doc.get('text', ''))}" for doc in context]) if context else "Nenhum contexto."
-
-    def summarize_plan_for_confirmation(self, steps: List[Dict[str, Any]], user_email: str) -> str:
-        plan_text = ""
-        for step in steps:
-            intent = step['intent'].replace('call_', '').replace('_tool', '')
-            args = step['args']
-            repo = args.get('repositorio', 'N/A')
-            plan_text += f"* Ação: {intent} em {repo}\n"
-            
-        return f"**Plano:**\n{plan_text}\n**Confirma?** (Sim/Não)"
-
-    def summarize_action_for_confirmation(self, intent_name: str, args: Dict[str, Any]) -> str:
-        return f"Confirmar: {intent_name}?"
