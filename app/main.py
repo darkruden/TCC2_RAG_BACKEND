@@ -302,10 +302,25 @@ async def _route_intent(
         target_queue = None
 
         if intent == "call_query_tool":
-             # ... (Lógica de Query mantida igual) ...
+             # Se for Query, retornamos para o frontend iniciar o stream
              if i == len(steps) - 1:
-                payload = { "repositorio": repo, "prompt_usuario": args.get("prompt_usuario") }
-                return { "response_type": "stream_answer", "message": json.dumps(payload), "job_id": None }
+                
+                # --- CORREÇÃO: Injeção de Arquivo para Análise de Código ---
+                prompt_final = args.get("prompt_usuario")
+                if file_content:
+                    # Anexa o código/texto bruto para garantir que nada se perca no resumo
+                    prompt_final = f"{prompt_final}\n\n--- ARQUIVO ANEXADO ---\n{file_content}"
+                # -----------------------------------------------------------
+
+                payload = {
+                    "repositorio": repo,
+                    "prompt_usuario": prompt_final, # Usa o prompt turbinado
+                }
+                return {
+                    "response_type": "stream_answer",
+                    "message": json.dumps(payload),
+                    "job_id": None,
+                }
              continue
 
         elif intent == "call_ingest_tool":
