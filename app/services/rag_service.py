@@ -133,20 +133,48 @@ class RAGService:
             
             print(f"[RAGService] Buscando em: {real_repo_name} (Branch: {branch or 'Todas'})")
 
-            # 2. BUSCA NO BANCO (Com filtro de branch)
+            # 2. BUSCA HÍBRIDA (Semântica + Temporal)
+            
+            # A. Busca Semântica (Vector Search) - O que tem a ver com a pergunta?
             documentos_similares = self.metadata_service.find_similar_documents(
                 user_id=user_id, 
                 query_text=query, 
-                repo_name=real_repo_name, # Usa o nome limpo
-                branch=branch,            # Usa a branch (se houver)
+                repo_name=real_repo_name, 
+                branch=branch,            
                 k=5,
             )
+            
+            # B. Busca Temporal (SQL Sort) - O que aconteceu por último?
+            # Isso garante que a IA saiba o "agora", mesmo que a pergunta não pareça similar.
+            commits_recentes = self.metadata_service.get_recent_commits(
+                user_id=user_id,
+                repo_name=real_repo_name,
+                limit=3 # Pegamos os 3 últimos para garantir frescor
+            )
+            
+            # Combinamos as listas (evitando duplicatas de ID se houver)
+            # Damos prioridade aos recentes no topo da lista para o LLM ver primeiro
+            ids_existentes = {doc['metadados'].get('sha') for doc in documentos_similares if doc.get('tipo') == 'commit'}
+            
+            contexto_combinado = []
+            
+            # Adiciona recentes (se já não estiverem na lista de similares)
+            for doc in commits_recentes:
+                sha = doc['metadados'].get('sha')
+                if sha not in ids_existentes:
+                    # Adicionamos uma tag visual para o LLM saber que isso é recente
+                    doc['conteudo'] = f"[ATIVIDADE RECENTE] {doc['conteudo']}"
+                    contexto_combinado.append(doc)
+            
+            # Adiciona os similares originais
+            contexto_combinado.extend(documentos_similares)
             
             instrucao = self.metadata_service.find_similar_instruction(
                 user_id=user_id, repo_name=real_repo_name, query_text=query
             )
 
-            contexto_para_llm, fontes_ui = self._format_context_for_llm(documentos_similares)
+            # Passamos a lista combinada para formatação
+            contexto_para_llm, fontes_ui = self._format_context_for_llm(contexto_combinado)
 
             # Envia as fontes
             yield json.dumps(fontes_ui) + "[[SOURCES_END]]"

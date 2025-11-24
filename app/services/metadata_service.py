@@ -188,3 +188,28 @@ class MetadataService:
             res = self.supabase.rpc('get_distinct_users_for_repo', {'repo_name_filter': repo_name}).execute()
             return [row['user_id'] for row in res.data] if res.data else []
         except Exception: return []
+
+    def get_recent_commits(self, user_id: str, repo_name: str, limit: int = 5) -> List[Dict[str, Any]]:
+        if not self.supabase: return []
+        try:
+            params = {
+                'match_user_id': user_id,
+                'match_repo': repo_name,
+                'limit_count': limit
+            }
+            # Chama a "consulta salva" (RPC) no banco
+            response = self.supabase.rpc('get_recent_commits_user', params).execute()
+            
+            results = []
+            for row in (response.data or []):
+                results.append({
+                    "conteudo": row['conteudo'],
+                    "metadados": row['metadados'],
+                    "tipo": "commit",
+                    "file_path": "Contexto Temporal (Recente)",
+                    "branch": "main" 
+                })
+            return results
+        except Exception as e:
+            print(f"[MetadataService] Erro ao buscar commits recentes: {e}")
+            return []
