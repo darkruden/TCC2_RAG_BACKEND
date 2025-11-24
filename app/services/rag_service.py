@@ -144,29 +144,41 @@ class RAGService:
                 k=5,
             )
             
-            # B. Busca Temporal (SQL Sort) - O que aconteceu por último?
-            # Isso garante que a IA saiba o "agora", mesmo que a pergunta não pareça similar.
+            # B. Busca Temporal (SQL Sort)
             commits_recentes = self.metadata_service.get_recent_commits(
                 user_id=user_id,
                 repo_name=real_repo_name,
-                limit=3 # Pegamos os 3 últimos para garantir frescor
+                limit=5 # Aumentei para 5 para ter mais contexto
             )
             
-            # Combinamos as listas (evitando duplicatas de ID se houver)
-            # Damos prioridade aos recentes no topo da lista para o LLM ver primeiro
+            # Combinamos as listas
             ids_existentes = {doc['metadados'].get('sha') for doc in documentos_similares if doc.get('tipo') == 'commit'}
             
             contexto_combinado = []
             
-            # Adiciona recentes (se já não estiverem na lista de similares)
-            for doc in commits_recentes:
-                sha = doc['metadados'].get('sha')
-                if sha not in ids_existentes:
-                    # Adicionamos uma tag visual para o LLM saber que isso é recente
-                    doc['conteudo'] = f"[ATIVIDADE RECENTE] {doc['conteudo']}"
-                    contexto_combinado.append(doc)
-            
-            # Adiciona os similares originais
+            # 1. ADICIONA OS RECENTES PRIMEIRO (TOPO DO CONTEXTO)
+            if commits_recentes:
+                contexto_combinado.append({
+                    "conteudo": "--- INÍCIO DA LINHA DO TEMPO (MAIS RECENTES) ---\nEstes são os commits mais atuais do projeto, ordenados cronologicamente. Use esta lista para responder sobre 'último commit' ou 'estado atual'.",
+                    "file_path": "SISTEMA",
+                    "tipo": "info",
+                    "metadados": {}
+                })
+                
+                for doc in commits_recentes:
+                    sha = doc['metadados'].get('sha')
+                    # Adiciona mesmo se já existir na busca vetorial, para garantir a ordem cronológica no topo
+                    if sha not in ids_existentes:
+                        contexto_combinado.append(doc)
+                
+                contexto_combinado.append({
+                    "conteudo": "--- FIM DA LINHA DO TEMPO ---\nAgora seguem documentos encontrados por similaridade semântica:",
+                    "file_path": "SISTEMA",
+                    "tipo": "info",
+                    "metadados": {}
+                })
+
+            # 2. ADICIONA OS SIMILARES (VETORIAL)
             contexto_combinado.extend(documentos_similares)
             
             instrucao = self.metadata_service.find_similar_instruction(

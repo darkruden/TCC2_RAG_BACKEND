@@ -197,16 +197,20 @@ class MetadataService:
                 'match_repo': repo_name,
                 'limit_count': limit
             }
-            # Chama a "consulta salva" (RPC) no banco
+            # Chama a RPC que acabamos de criar
             response = self.supabase.rpc('get_recent_commits_user', params).execute()
             
             results = []
             for row in (response.data or []):
+                # Formata para deixar claro para o LLM que isso é RECENTE
+                data_commit = row['metadados'].get('date', 'N/A')
+                sha_curto = row['metadados'].get('sha', 'N/A')[:7]
+                
                 results.append({
-                    "conteudo": row['conteudo'],
+                    "conteudo": f"[DATA: {data_commit}] [SHA: {sha_curto}] {row['conteudo']}",
                     "metadados": row['metadados'],
                     "tipo": "commit",
-                    "file_path": "Contexto Temporal (Recente)",
+                    "file_path": "Contexto Temporal (Recente)", 
                     "branch": "main" 
                 })
             return results
