@@ -189,20 +189,23 @@ class MetadataService:
             return [row['user_id'] for row in res.data] if res.data else []
         except Exception: return []
 
-    def get_recent_commits(self, user_id: str, repo_name: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def get_recent_commits(self, user_id: str, repo_name: str, branch: str, limit: int = 5) -> List[Dict[str, Any]]:
         if not self.supabase: return []
         try:
+            # Se branch vier None (ex: ingestão antiga), assume main
+            target_branch = branch if branch else "main"
+            
             params = {
                 'match_user_id': user_id,
                 'match_repo': repo_name,
+                'match_branch': target_branch, # <--- Passando o branch
                 'limit_count': limit
             }
-            # Chama a RPC que acabamos de criar
+            
             response = self.supabase.rpc('get_recent_commits_user', params).execute()
             
             results = []
             for row in (response.data or []):
-                # Formata para deixar claro para o LLM que isso é RECENTE
                 data_commit = row['metadados'].get('date', 'N/A')
                 sha_curto = row['metadados'].get('sha', 'N/A')[:7]
                 
@@ -211,7 +214,7 @@ class MetadataService:
                     "metadados": row['metadados'],
                     "tipo": "commit",
                     "file_path": "Contexto Temporal (Recente)", 
-                    "branch": "main" 
+                    "branch": target_branch 
                 })
             return results
         except Exception as e:

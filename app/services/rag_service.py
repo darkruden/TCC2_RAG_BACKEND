@@ -2,12 +2,13 @@
 
 import os
 import json
+import traceback
 from typing import Dict, Any, Iterator, List, Tuple, Optional
 
 from app.services.metadata_service import MetadataService
 from app.services.llm_service import LLMService
 from app.services.embedding_service import EmbeddingService
-from app.services.github_service import GithubService # <--- Importe o GithubService
+from app.services.github_service import GithubService 
 
 class RAGService:
     def __init__(self):
@@ -34,170 +35,194 @@ class RAGService:
             
         context_parts = []
         sources_ui = []
+        
+        # Set para evitar duplicatas VISUAIS exatas
+        seen_sources = set()
 
         for i, doc in enumerate(context_docs):
+            # --- Pula documentos de instrução interna (SISTEMA) ---
+            if doc.get('tipo') == 'info' or doc.get('file_path') == 'SISTEMA':
+                # Adiciona apenas ao TEXTO do LLM, mas não à lista visual
+                context_parts.append(doc.get('conteudo', ''))
+                continue
+            
             raw_path = doc.get('file_path')
             content = doc.get('conteudo', 'N/A')
             branch = doc.get('branch', 'N/A')
-            
-            # Garante que meta é dict
-            meta = doc.get('metadados')
-            if not isinstance(meta, dict): meta = {}
+            meta = doc.get('metadados') if isinstance(doc.get('metadados'), dict) else {}
 
-            # --- 1. Detecção de Tipo ---
             tipo_original = doc.get('tipo')
+            identificador = raw_path # Default
+
             if 'sha' in meta: 
                 tipo = 'commit'
+                identificador = meta.get('sha')
             elif 'titulo' in meta and 'id' in meta:
                 tipo = 'pr' if 'pr' in str(tipo_original).lower() else 'issue'
+                identificador = str(meta.get('id'))
             else:
                 tipo = 'file'
 
-            # --- 2. Extração de Dados para o Frontend ---
-            # Aqui extraímos sha e id para enviar ao React
-            sha = meta.get('sha')
-            item_id = meta.get('id')
-            url_link = meta.get('url')
+            # --- DEDUPLICAÇÃO VISUAL ---
+            # Se já mostramos este SHA ou Arquivo, não adiciona na lista visual de novo
+            unique_key = f"{tipo}:{identificador}"
+            should_add_to_ui = False
+            if unique_key not in seen_sources:
+                seen_sources.add(unique_key)
+                should_add_to_ui = True
 
-            # --- 3. Formatação do Contexto (Prompt) ---
+            # --- Formatação do Texto (Prompt) ---
+            display_name = raw_path
+            url_link = meta.get('url', '#')
+            
+            context_text = ""
             if tipo == 'commit':
-                sha_curto = sha[:7] if sha else 'N/A'
-                autor = meta.get('autor', 'N/A')
-                data_fmt = meta.get('data', 'N/A')
+                sha_curto = identificador[:7] if identificador else 'N/A'
                 display_name = f"Commit {sha_curto}"
-                
                 context_text = (
-                    f"--- DADOS DO COMMIT ---\n"
-                    f"Tipo: Commit\n"
-                    f"ID (SHA): {sha_curto}\n"
-                    f"Autor: {autor}\n"
-                    f"Data: {data_fmt}\n"
-                    f"URL: {url_link}\n"
-                    f"Mensagem: {content}\n"
+                    f"--- DADOS DO COMMIT ---\nID: {sha_curto}\nAutor: {meta.get('autor')}\nData: {meta.get('data')}\nURL: {url_link}\nMensagem: {content}\n"
                 )
             elif tipo in ['issue', 'pr']:
-                titulo = meta.get('titulo', 'Sem titulo')
-                data_fmt = meta.get('data', 'N/A')
-                display_name = f"{tipo.upper()} #{item_id}"
-                
+                display_name = f"{tipo.upper()} #{identificador}"
                 context_text = (
-                    f"--- DADOS DA {tipo.upper()} ---\n"
-                    f"Tipo: {tipo.upper()}\n"
-                    f"Número: #{item_id}\n"
-                    f"Título: {titulo}\n"
-                    f"Data: {data_fmt}\n"
-                    f"URL: {url_link}\n"
-                    f"Conteúdo: {content}\n"
+                    f"--- {tipo.upper()} ---\nNúmero: #{identificador}\nTítulo: {meta.get('titulo')}\nURL: {url_link}\nConteúdo: {content}\n"
                 )
             else:
-                display_name = raw_path or "Arquivo"
-                content_snippet = content[:5000]
-                context_text = (
-                    f"--- ARQUIVO DE CÓDIGO ---\n"
-                    f"Arquivo: {display_name}\n"
-                    f"Branch: {branch}\n"
-                    f"Conteúdo:\n{content_snippet}\n"
-                )
+                # Arquivo
+                context_text = f"--- ARQUIVO: {display_name} (Branch: {branch}) ---\n{content[:5000]}\n"
 
-            context_parts.append(f"--- Documento {i+1} ({display_name}) ---\n{context_text}")
+            context_parts.append(context_text)
             
-            # --- 4. Montagem da Fonte para UI (Frontend) ---
-            sources_ui.append({
-                "source_id": i + 1,
-                "file_path": display_name,
-                "branch": branch,
-                "url": url_link,
-                "tipo": tipo,
-                # CAMPOS CRÍTICOS PARA O SEU FRONTEND:
-                "sha": sha,    # Necessário para 'ResultadoConsulta.js' renderizar commits
-                "id": item_id  # Necessário para renderizar Issues/PRs
-            })
+            # --- Adiciona à UI apenas se for único e real ---
+            if should_add_to_ui:
+                sources_ui.append({
+                    "source_id": len(sources_ui) + 1,
+                    "file_path": display_name,
+                    "branch": branch,
+                    "url": url_link,
+                    "tipo": tipo,
+                    "sha": meta.get('sha'),
+                    "id": meta.get('id')
+                })
             
         return "\n\n".join(context_parts), sources_ui
 
+    def _get_combined_context(self, user_id: str, query: str, repo_name: str) -> Tuple[str, List[Dict[str, Any]], Optional[str]]:
+        """
+        Helper privado que executa a lógica de busca híbrida e retorna:
+        (texto_prompt, lista_fontes_ui, instrucao_rag)
+        Evita duplicação de código entre sync e stream.
+        """
+        real_repo_name, branch = self.github_service.parse_repo_url(repo_name)
+        
+        # 1. Busca Semântica
+        documentos_similares = self.metadata_service.find_similar_documents(
+            user_id=user_id, 
+            query_text=query, 
+            repo_name=real_repo_name, 
+            branch=branch,          
+            k=5,
+        )
+        
+        # 2. Busca Temporal (SQL Sort)
+        commits_recentes = self.metadata_service.get_recent_commits(
+            user_id=user_id,
+            repo_name=real_repo_name,
+            branch=branch,
+            limit=5 
+        )
+        
+        # 3. Combinação Inteligente
+        final_docs_map = {} 
+        ordered_docs = []
+
+        # A. Adiciona Cabeçalho Temporal
+        if commits_recentes:
+            ordered_docs.append({
+                "conteudo": "--- INÍCIO DA LINHA DO TEMPO (MAIS RECENTES) ---\nEstes são os commits mais atuais do branch selecionado. Priorize esta informação para perguntas sobre 'último' ou 'atual'.",
+                "file_path": "SISTEMA",
+                "tipo": "info",
+                "metadados": {}
+            })
+            for doc in commits_recentes:
+                sha = doc['metadados'].get('sha')
+                if sha:
+                    final_docs_map[sha] = doc
+                    ordered_docs.append(doc)
+
+            ordered_docs.append({
+                "conteudo": "--- FIM DA LINHA DO TEMPO ---\nSeguem documentos por similaridade:",
+                "file_path": "SISTEMA",
+                "tipo": "info",
+                "metadados": {}
+            })
+
+        # B. Adiciona Similares
+        for doc in documentos_similares:
+            meta = doc.get('metadados') or {}
+            identifier = meta.get('sha') or doc.get('file_path')
+            
+            if identifier not in final_docs_map:
+                final_docs_map[identifier] = doc
+                ordered_docs.append(doc)
+        
+        instrucao = self.metadata_service.find_similar_instruction(
+            user_id=user_id, repo_name=real_repo_name, query_text=query
+        )
+
+        contexto_para_llm, fontes_ui = self._format_context_for_llm(ordered_docs)
+        
+        return contexto_para_llm, fontes_ui, instrucao
+
     def gerar_resposta_rag(self, user_id: str, prompt_usuario: str, repo_name: str) -> Dict[str, Any]:
-        # ... (Mantemos a lógica similar ao stream, mas síncrona)
-        # Se não usar síncrono, pode ignorar este método ou atualizá-lo igual ao stream abaixo
-        pass 
+        """
+        Versão SÍNCRONA da geração de resposta (útil para relatórios ou chamadas sem stream).
+        """
+        if not self.metadata_service or not self.llm_service or not self.github_service:
+             return {"error": "Serviços não inicializados"}
+
+        try:
+            print(f"[RAGService-Sync] Query: '{prompt_usuario}'")
+            contexto_llm, fontes_ui, instrucao = self._get_combined_context(user_id, prompt_usuario, repo_name)
+            
+            resposta_texto = self.llm_service.generate_rag_response(
+                contexto=contexto_llm,
+                prompt=prompt_usuario,
+                instrucao_rag=instrucao
+            )
+            
+            return {
+                "response_type": "answer",
+                "message": resposta_texto,
+                "fontes": fontes_ui,
+                "contexto": {"trechos": "Contexto híbrido processado."}
+            }
+            
+        except Exception as e:
+            print(f"[RAGService-Sync] ERRO: {e}")
+            traceback.print_exc()
+            return {"error": str(e)}
 
     def gerar_resposta_rag_stream(self, user_id: str, query: str, repo_name: str) -> Iterator[str]:
+        """
+        Versão STREAMING da geração de resposta (usada pelo Chat).
+        """
         if not self.metadata_service or not self.llm_service or not self.github_service:
             yield f"Erro: Serviços dependentes falharam."
             return
 
-        print(f"[RAGService-Stream] Query: '{query}' | Input Repo: '{repo_name}'")
+        print(f"[RAGService-Stream] Query: '{query}'")
         
         try:
-            # 1. LIMPEZA DA URL: Extrai nome limpo e branch
-            real_repo_name, branch = self.github_service.parse_repo_url(repo_name)
-            
-            print(f"[RAGService] Buscando em: {real_repo_name} (Branch: {branch or 'Todas'})")
+            # Reutiliza a lógica de busca unificada
+            contexto_llm, fontes_ui, instrucao = self._get_combined_context(user_id, query, repo_name)
 
-            # 2. BUSCA HÍBRIDA (Semântica + Temporal)
-            
-            # A. Busca Semântica (Vector Search) - O que tem a ver com a pergunta?
-            documentos_similares = self.metadata_service.find_similar_documents(
-                user_id=user_id, 
-                query_text=query, 
-                repo_name=real_repo_name, 
-                branch=branch,            
-                k=5,
-            )
-            
-            # B. Busca Temporal (SQL Sort)
-            commits_recentes = self.metadata_service.get_recent_commits(
-                user_id=user_id,
-                repo_name=real_repo_name,
-                limit=5 # Aumentei para 5 para ter mais contexto
-            )
-            
-            # Combinamos as listas
-            ids_existentes = {doc['metadados'].get('sha') for doc in documentos_similares if doc.get('tipo') == 'commit'}
-            
-            contexto_combinado = []
-            
-            # 1. ADICIONA OS RECENTES PRIMEIRO (TOPO DO CONTEXTO)
-            if commits_recentes:
-                contexto_combinado.append({
-                    "conteudo": "--- INÍCIO DA LINHA DO TEMPO (MAIS RECENTES) ---\nEstes são os commits mais atuais do projeto, ordenados cronologicamente. Use esta lista para responder sobre 'último commit' ou 'estado atual'.",
-                    "file_path": "SISTEMA",
-                    "tipo": "info",
-                    "metadados": {}
-                })
-                
-                for doc in commits_recentes:
-                    sha = doc['metadados'].get('sha')
-                    # Adiciona mesmo se já existir na busca vetorial, para garantir a ordem cronológica no topo
-                    if sha not in ids_existentes:
-                        contexto_combinado.append(doc)
-                
-                contexto_combinado.append({
-                    "conteudo": "--- FIM DA LINHA DO TEMPO ---\nAgora seguem documentos encontrados por similaridade semântica:",
-                    "file_path": "SISTEMA",
-                    "tipo": "info",
-                    "metadados": {}
-                })
-
-            # 2. ADICIONA OS SIMILARES (VETORIAL)
-            contexto_combinado.extend(documentos_similares)
-            
-            instrucao = self.metadata_service.find_similar_instruction(
-                user_id=user_id, repo_name=real_repo_name, query_text=query
-            )
-
-            # Passamos a lista combinada para formatação
-            contexto_para_llm, fontes_ui = self._format_context_for_llm(contexto_combinado)
-
-            # Envia as fontes
+            # Envia as fontes primeiro (protocolo do frontend)
             yield json.dumps(fontes_ui) + "[[SOURCES_END]]"
             
-            if not documentos_similares:
-                print("[RAGService] Nenhum documento encontrado.")
-                # Opcional: Avisar que não achou nada
-            
-            # Gera resposta
+            # Gera o texto via stream
             for token in self.llm_service.generate_rag_response_stream(
-                contexto=contexto_para_llm,
+                contexto=contexto_llm,
                 prompt=query,
                 instrucao_rag=instrucao
             ):
@@ -205,6 +230,7 @@ class RAGService:
                 
         except Exception as e:
             print(f"[RAGService-Stream] ERRO: {e}")
+            traceback.print_exc()
             yield f"\n\n**Erro ao gerar resposta:** {e}"
 
 # --- Instância Singleton ---
@@ -214,4 +240,3 @@ try:
     gerar_resposta_rag_stream = _rag_service_instance.gerar_resposta_rag_stream
 except Exception as e:
     print(f"[RAGService] FALHA AO INICIALIZAR: {e}")
-    # ... (fallback handlers) ...
