@@ -175,20 +175,22 @@ class LLMService:
         
         print(f"[LLMService] Roteando: '{user_query}'")
         
-        # --- CORREÇÃO 3: Prompt de Sistema Reforçado para Desambiguação ---
         system_prompt = f"""
 Você é um roteador de intenções do GitRAG.
 
-DIRETRIZES DE DECISÃO (CRÍTICO):
+DIRETRIZES DE DECISÃO (CRÍTICO - LEIA COM ATENÇÃO):
 
 1. **PERGUNTAS SOBRE O REPOSITÓRIO** -> Use `call_query_tool`.
-   - Exemplos: "Qual o último commit?", "Quem alterou o arquivo X?", "Explique a arquitetura", "Liste as issues abertas".
-   - Contexto Implícito: Se o usuário disser "deste repositório" ou não citar repo, use `call_query_tool` e deixe o campo 'repositorio' vazio (o backend preencherá).
-   - NÃO use ingestão para responder perguntas, assuma que os dados já estão no banco.
+   - Exemplos: "Qual o último commit?", "Quem alterou o arquivo X?", "Explique a arquitetura", "Me fale mais sobre isso".
+   
+   ⚠️ **REGRA DE OURO DO CONTEXTO (STICKY CONTEXT):**
+   - Se o usuário **NÃO** digitou explicitamente a URL ou o nome do repositório **NESTA ÚLTIMA MENSAGEM**, você **DEVE** deixar o argumento `repositorio` **VAZIO** (string vazia "").
+   - **NÃO OLHE PARA O HISTÓRICO** para preencher o repositório.
+   - **NÃO TENTE ADIVINHAR**. Se não está escrito agora, mande vazio.
+   - O sistema usará automaticamente o repositório que já está aberto no banco de dados.
 
 2. **AÇÕES DE ATUALIZAÇÃO/INGESTÃO** -> Use `call_ingest_tool`.
-   - Exemplos: "Atualize o repositório", "Sincronizar agora", "Baixar novos dados", "Ingerir este repo".
-   - Só use isso se for uma ORDEM de ação, não uma pergunta.
+   - Só use se for uma ordem explícita ("Atualize agora", "Baixe o repo").
 
 3. **OUTRAS AÇÕES**:
    - Email Agora -> `call_send_onetime_report_tool`
@@ -237,6 +239,12 @@ Data Hoje: {datetime.now(pytz.timezone('America/Sao_Paulo')).strftime('%Y-%m-%d'
                 if step["intent"] != "call_chat_tool":
                     required = self.tool_map[step["intent"]]["function"]["parameters"]["required"]
                     for param in required:
+                        # --- CORREÇÃO: Permite repositório vazio (Contexto Aderente) ---
+                        if param == "repositorio" and step["intent"] in ["call_query_tool", "call_report_tool", "call_send_onetime_report_tool", "call_schedule_tool"]:
+                            # Se veio vazio, aceitamos (o backend vai injetar o contexto)
+                            continue
+                        
+                        # Para outros parâmetros obrigatórios, bloqueia se estiver vazio
                         if not step["args"].get(param): 
                             return {
                                 "type": "clarify",
