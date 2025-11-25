@@ -109,18 +109,23 @@ class RAGService:
 
     def _get_combined_context(self, user_id: str, query: str, repo_name: str) -> Tuple[str, List[Dict[str, Any]], Optional[str]]:
         """
-        Helper privado que executa a lógica de busca híbrida e retorna:
-        (texto_prompt, lista_fontes_ui, instrucao_rag)
-        Evita duplicação de código entre sync e stream.
+        Helper privado que executa a lógica de busca híbrida.
         """
-        real_repo_name, branch = self.github_service.parse_repo_url(repo_name)
+        real_repo_name, raw_branch = self.github_service.parse_repo_url(repo_name)
         
-        # 1. Busca Semântica
+        # --- CORREÇÃO DEFINITIVA DE BRANCH ---
+        # Se a URL não tem branch (None), definimos EXPLICITAMENTE como "main".
+        # Isso impede que a busca vetorial "vaze" para outras branches.
+        target_branch = raw_branch if raw_branch else "main"
+        
+        print(f"[RAGService] Buscando contexto. Repo: {real_repo_name} | Branch Alvo: {target_branch}")
+        
+        # 1. Busca Semântica (Agora forçada na branch alvo)
         documentos_similares = self.metadata_service.find_similar_documents(
             user_id=user_id, 
             query_text=query, 
             repo_name=real_repo_name, 
-            branch=branch,          
+            branch=target_branch, # <--- Antes passávamos 'branch' (que podia ser None)
             k=5,
         )
         
@@ -128,7 +133,7 @@ class RAGService:
         commits_recentes = self.metadata_service.get_recent_commits(
             user_id=user_id,
             repo_name=real_repo_name,
-            branch=branch,
+            branch=target_branch, # Já estava corrigido no metadata, mas agora garantimos aqui também
             limit=5 
         )
         
