@@ -700,21 +700,19 @@ async def handle_chat_stream(
 
         # Chave de cache agora é específica do usuário
         cache_key = f"cache:query:user_{user_id}:{repo}:{hashlib.md5(prompt.encode()).hexdigest()}"
-
-        if conn:
-            try:
-                cached_result = conn.get(cache_key)
-                if cached_result:
-                    print(f"[Cache-Stream] HIT! Retornando stream de cache para {cache_key}")
-
-                    async def cached_stream():
-                        yield json.loads(cached_result)["message"]
-
-                    return StreamingResponse(cached_stream(), media_type="text/plain")
-            except Exception as e:
-                print(f"[Cache-Stream] ERRO no Redis (GET): {e}")
-
-        print(f"[Cache-Stream] MISS! Executando RAG Stream para {cache_key}")
+        
+        # --- COMENTE ESTE BLOCO PARA DESATIVAR O CACHE ---
+        # if conn:
+        #     try:
+        #         cached_result = conn.get(cache_key)
+        #         if cached_result:
+        #             print(f"[Cache-Stream] HIT! Retornando stream de cache para {cache_key}")
+        #             async def cached_stream():
+        #                 yield json.loads(cached_result)["message"]
+        #             return StreamingResponse(cached_stream(), media_type="text/plain")
+        #     except Exception as e:
+        #         print(f"[Cache-Stream] ERRO no Redis (GET): {e}")
+        # -------------------------------------------------
 
         response_generator = gerar_resposta_rag_stream(user_id, prompt, repo)
 
