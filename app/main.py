@@ -237,8 +237,9 @@ async def _route_intent(
 ) -> Dict[str, Any]:
     """
     Converte a saída do LLM em chamadas concretas.
-    Agora com Lógica de 'Contexto Aderente' e Chat Restritivo corrigido.
+    IMPLEMENTAÇÃO: Contexto Aderente com Validação Determinística.
     """
+    # Verifica serviços globais
     if not conn or not q_ingest or not q_reports or not llm_service:
         return {
             "response_type": "error",
@@ -246,13 +247,11 @@ async def _route_intent(
             "job_id": None,
         }
 
-    # Tratamento para chat simples (sem tools)
+    # Tratamento para chat simples
     if intent_data["type"] == "simple_chat" or intent_data["type"] == "clarify":
         text_response = intent_data.get("response_text", last_user_prompt)
-        # Se for clarify, usa o texto direto. Se for simple_chat, passa pelo filtro da persona.
         if intent_data["type"] == "simple_chat":
              text_response = llm_service.generate_simple_response(text_response)
-             
         return {"response_type": "answer", "message": text_response, "job_id": None}
 
     steps = intent_data.get("steps", [])
@@ -262,64 +261,92 @@ async def _route_intent(
     final_message = "Tarefas enfileiradas."
     job_messages = {}
 
+    # --- RECUPERAÇÃO PRÉVIA DO CONTEXTO SALVO ---
+    # Precisamos saber o que está no banco antes de decidir
+    db_saved_repo = None
+    try:
+        user_data = supabase_client.table("usuarios").select("last_ingested_repo").eq("id", user_id).execute()
+        if user_data.data:
+            db_saved_repo = user_data.data[0].get("last_ingested_repo")
+    except Exception as e:
+        print(f"[Contexto] Erro ao ler DB: {e}")
+
     for i, step in enumerate(steps):
         intent = step.get("intent")
         args = step.get("args", {}) or {}
-        repo = args.get("repositorio")
-
-        # 1. Contexto Aderente (Sticky Context)
-        if repo:
-            try:
-                print(f"[Contexto] Atualizando contexto ativo para: {repo}")
-                supabase_client.table("usuarios").update({"last_ingested_repo": repo}).eq("id", user_id).execute()
-            except Exception as e:
-                print(f"[Contexto] Erro não fatal ao salvar contexto: {e}")
-
-        # 2. Contexto Implícito (Recuperação)
-        intents_needing_repo = [
-            "call_query_tool", "call_report_tool", "call_ingest_tool", 
-            "call_schedule_tool", "call_save_instruction_tool", "call_send_onetime_report_tool"
-        ]
+        llm_suggested_repo = args.get("repositorio")
         
-        if intent in intents_needing_repo and not repo:
-            try:
-                user_data = supabase_client.table("usuarios").select("last_ingested_repo").eq("id", user_id).execute()
-                if user_data.data and user_data.data[0].get("last_ingested_repo"):
-                    repo = user_data.data[0]["last_ingested_repo"]
-                    args["repositorio"] = repo
-            except: pass
+        real_repo_to_use = None
 
-        # 3. Injeção de Arquivo
-        if file_content and "prompt_relatorio" in args:
-            args["prompt_relatorio"] = f"{args.get('prompt_relatorio', '')}\n\n--- CONTEÚDO ARQUIVO ---\n{file_content}"
-        if file_content and intent == "call_report_tool" and "prompt_usuario" in args:
-             args["prompt_usuario"] = f"{args.get('prompt_usuario', '')}\n\n--- CONTEÚDO ARQUIVO ---\n{file_content}"
+        # --- LÓGICA PROFISSIONAL DE CONTEXTO (GUARDRAIL) ---
+        
+        # 1. Verifica se houve Troca de Contexto EXPLÍCITA
+        # O usuário digitou o repo na mensagem atual?
+        is_explicit_switch = False
+        if llm_suggested_repo:
+            # Normalização simples para checar presença
+            # Verifica se partes chave da URL/Nome estão no prompt
+            clean_prompt = last_user_prompt.lower()
+            clean_repo = llm_suggested_repo.lower().replace("https://github.com/", "")
+            
+            # Se o usuário digitou, aceitamos a sugestão do LLM
+            if clean_repo in clean_prompt or llm_suggested_repo in last_user_prompt:
+                is_explicit_switch = True
+                real_repo_to_use = llm_suggested_repo
+                # Persiste a mudança no banco
+                try:
+                    print(f"[Contexto] Troca Explícita detectada. Salvando: {real_repo_to_use}")
+                    supabase_client.table("usuarios").update({"last_ingested_repo": real_repo_to_use}).eq("id", user_id).execute()
+                    db_saved_repo = real_repo_to_use # Atualiza localmente
+                except: pass
+            else:
+                print(f"[Contexto] Ignorando alucinação do LLM ('{llm_suggested_repo}' não está no prompt).")
+
+        # 2. Se não foi troca explícita, usamos o Sticky Context do Banco
+        if not is_explicit_switch:
+            if db_saved_repo:
+                print(f"[Contexto] Usando Sticky Context do DB: {db_saved_repo}")
+                real_repo_to_use = db_saved_repo
+            else:
+                # Caso extremo: LLM alucinou mas não temos nada no banco.
+                # Aceitamos o LLM como fallback ou pedimos clarificação.
+                real_repo_to_use = llm_suggested_repo
+
+        # 3. Injeta o repositório decidido de volta nos argumentos
+        args["repositorio"] = real_repo_to_use
+        repo = real_repo_to_use # Variável local para uso abaixo
+
+        # --- FIM DA LÓGICA DE CONTEXTO ---
+
+        # Injeção de Arquivo (Conteúdo)
+        if file_content:
+            if "prompt_relatorio" in args:
+                args["prompt_relatorio"] = f"{args.get('prompt_relatorio', '')}\n\n--- CONTEÚDO ARQUIVO ---\n{file_content}"
+            if intent == "call_report_tool" and "prompt_usuario" in args:
+                 args["prompt_usuario"] = f"{args.get('prompt_usuario', '')}\n\n--- CONTEÚDO ARQUIVO ---\n{file_content}"
+            if intent == "call_query_tool":
+                args["prompt_usuario"] = f"{args.get('prompt_usuario', '')}\n\n--- CONTEÚDO ARQUIVO ---\n{file_content}"
+
 
         # ... Execução das ferramentas ...
         func = None
         params = []
         target_queue = None
 
-        # --- CORREÇÃO AQUI: Bloco para Chat Casual (Tool) ---
         if intent == "call_chat_tool":
             chat_prompt = args.get("prompt") or last_user_prompt
-            # Chama a IA com a persona restritiva
             resp_text = llm_service.generate_simple_response(chat_prompt)
-            return {
-                "response_type": "answer",
-                "message": resp_text,
-                "job_id": None
-            }
-        # ----------------------------------------------------
+            return { "response_type": "answer", "message": resp_text, "job_id": None }
 
         elif intent == "call_query_tool":
              if i == len(steps) - 1:
-                prompt_final = args.get("prompt_usuario")
-                if file_content:
-                    prompt_final = f"{prompt_final}\n\n--- ARQUIVO ANEXADO ---\n{file_content}"
+                # Validação final
+                if not repo:
+                     return { "response_type": "clarification", "message": "Qual repositório você gostaria de analisar?", "job_id": None }
+                
                 payload = {
                     "repositorio": repo,
-                    "prompt_usuario": prompt_final,
+                    "prompt_usuario": args.get("prompt_usuario"),
                 }
                 return { "response_type": "stream_answer", "message": json.dumps(payload), "job_id": None }
              continue
@@ -353,7 +380,7 @@ async def _route_intent(
             freq = args.get("frequencia")
             email = args.get("user_email") or user_email
             if not repo or not args.get("prompt_relatorio") or not freq:
-                 return { "response_type": "clarification", "message": "Dados incompletos.", "job_id": None }
+                 return { "response_type": "clarification", "message": "Dados incompletos para agendamento.", "job_id": None }
 
             if freq == "once":
                 func = enviar_relatorio_agendado
