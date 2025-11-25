@@ -340,10 +340,26 @@ REGRAS ESTRITAS DE FORMATAÇÃO (ANTI-ALUCINAÇÃO):
 
     def generate_simple_response(self, prompt: str) -> str:
         try:
+            # --- PERSONA RESTRITIVA ---
+            system_prompt = """
+            Você é o assistente virtual do GitRAG, uma ferramenta de análise de repositórios e rastreabilidade de requisitos.
+            
+            SUA MISSÃO:
+            - Ajudar EXCLUSIVAMENTE com dúvidas sobre código, funcionalidades do GitRAG, relatórios e engenharia de software.
+            - Se o usuário tentar conversar sobre assuntos aleatórios (clima, política, esportes, vida pessoal), RECUSE EDUCADAMENTE.
+            - Diga algo como: "Sou focado apenas em análise de código. Como posso ajudar com seu repositório hoje?"
+            - Seja prestativo, técnico e profissional.
+            """
+            
             response = self.client.chat.completions.create(
                 model=self.routing_model, 
-                messages=[{"role": "system", "content": "Seja breve."}, {"role": "user", "content": prompt}],
-                temperature=0.3, max_tokens=50
+                messages=[
+                    {"role": "system", "content": system_prompt}, 
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3, 
+                max_tokens=150
             )
             return response.choices[0].message.content
-        except Exception: return "👍"
+        except Exception: 
+            return "Olá! Sou o assistente do GitRAG. Como posso ajudar com a análise do seu código?"
