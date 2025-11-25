@@ -227,6 +227,7 @@ CONFIRMATION_WORDS = ["sim", "s", "yes", "y", "correto", "confirmo", "pode", "is
 
 
 # --- FUNÇÃO HELPER: Roteador de Intenção (Multi-Step) ---
+# --- FUNÇÃO HELPER: Roteador de Intenção (Multi-Step) ---
 async def _route_intent(
     intent_data: Dict[str, Any], 
     user_id: str,
@@ -236,9 +237,8 @@ async def _route_intent(
 ) -> Dict[str, Any]:
     """
     Converte a saída do LLM em chamadas concretas.
-    Agora com Lógica de 'Contexto Aderente' (Sticky Context).
+    Agora com Lógica de 'Contexto Aderente' e Chat Restritivo corrigido.
     """
-    # Verifica serviços globais
     if not conn or not q_ingest or not q_reports or not llm_service:
         return {
             "response_type": "error",
@@ -246,12 +246,14 @@ async def _route_intent(
             "job_id": None,
         }
 
-    if intent_data["type"] == "clarify":
-        return {"response_type": "clarification", "message": intent_data.get("response_text", "Não entendi."), "job_id": None}
-
-    if intent_data["type"] == "simple_chat":
-        simple_response = llm_service.generate_simple_response(intent_data.get("response_text", last_user_prompt))
-        return {"response_type": "answer", "message": simple_response, "job_id": None}
+    # Tratamento para chat simples (sem tools)
+    if intent_data["type"] == "simple_chat" or intent_data["type"] == "clarify":
+        text_response = intent_data.get("response_text", last_user_prompt)
+        # Se for clarify, usa o texto direto. Se for simple_chat, passa pelo filtro da persona.
+        if intent_data["type"] == "simple_chat":
+             text_response = llm_service.generate_simple_response(text_response)
+             
+        return {"response_type": "answer", "message": text_response, "job_id": None}
 
     steps = intent_data.get("steps", [])
     print(f"[TRACER] Processando {len(steps)} intenções para User {user_id}...")
@@ -265,18 +267,15 @@ async def _route_intent(
         args = step.get("args", {}) or {}
         repo = args.get("repositorio")
 
-        # --- NOVA LÓGICA: CONTEXTO ADERENTE (STICKY CONTEXT) ---
-        # 1. Se o usuário ESPECIFICOU um repositório, salvamos ele como o novo padrão.
+        # 1. Contexto Aderente (Sticky Context)
         if repo:
             try:
-                # Normaliza para garantir que salve user/repo ou a URL completa com tree
-                # (O backend aceita ambos, então salvamos como veio do LLM)
                 print(f"[Contexto] Atualizando contexto ativo para: {repo}")
                 supabase_client.table("usuarios").update({"last_ingested_repo": repo}).eq("id", user_id).execute()
             except Exception as e:
                 print(f"[Contexto] Erro não fatal ao salvar contexto: {e}")
 
-        # 2. Se o usuário NÃO especificou (repo vazio), buscamos o último usado no banco.
+        # 2. Contexto Implícito (Recuperação)
         intents_needing_repo = [
             "call_query_tool", "call_report_tool", "call_ingest_tool", 
             "call_schedule_tool", "call_save_instruction_tool", "call_send_onetime_report_tool"
@@ -286,44 +285,43 @@ async def _route_intent(
             try:
                 user_data = supabase_client.table("usuarios").select("last_ingested_repo").eq("id", user_id).execute()
                 if user_data.data and user_data.data[0].get("last_ingested_repo"):
-                    saved_repo = user_data.data[0]["last_ingested_repo"]
-                    print(f"[Contexto] Usando contexto implícito: {saved_repo}")
-                    repo = saved_repo
-                    args["repositorio"] = repo # Injeta no argumento
-            except Exception as e:
-                print(f"[Contexto] Falha ao recuperar contexto: {e}")
+                    repo = user_data.data[0]["last_ingested_repo"]
+                    args["repositorio"] = repo
+            except: pass
 
-        # --- INJEÇÃO DE CONTEÚDO DE ARQUIVO ---
+        # 3. Injeção de Arquivo
         if file_content and "prompt_relatorio" in args:
-            prompt_atual = args.get("prompt_relatorio", "")
-            args["prompt_relatorio"] = f"{prompt_atual}\n\n--- CONTEÚDO DO ARQUIVO DE INSTRUÇÕES ---\n{file_content}"
-
+            args["prompt_relatorio"] = f"{args.get('prompt_relatorio', '')}\n\n--- CONTEÚDO ARQUIVO ---\n{file_content}"
         if file_content and intent == "call_report_tool" and "prompt_usuario" in args:
-             prompt_atual = args.get("prompt_usuario", "")
-             args["prompt_usuario"] = f"{prompt_atual}\n\n--- CONTEÚDO DO ARQUIVO DE INSTRUÇÕES ---\n{file_content}"
+             args["prompt_usuario"] = f"{args.get('prompt_usuario', '')}\n\n--- CONTEÚDO ARQUIVO ---\n{file_content}"
 
-
-        # ... Execução das ferramentas (Sem alterações abaixo) ...
+        # ... Execução das ferramentas ...
         func = None
         params = []
         target_queue = None
 
-        if intent == "call_query_tool":
+        # --- CORREÇÃO AQUI: Bloco para Chat Casual (Tool) ---
+        if intent == "call_chat_tool":
+            chat_prompt = args.get("prompt") or last_user_prompt
+            # Chama a IA com a persona restritiva
+            resp_text = llm_service.generate_simple_response(chat_prompt)
+            return {
+                "response_type": "answer",
+                "message": resp_text,
+                "job_id": None
+            }
+        # ----------------------------------------------------
+
+        elif intent == "call_query_tool":
              if i == len(steps) - 1:
-                
                 prompt_final = args.get("prompt_usuario")
                 if file_content:
                     prompt_final = f"{prompt_final}\n\n--- ARQUIVO ANEXADO ---\n{file_content}"
-
                 payload = {
                     "repositorio": repo,
                     "prompt_usuario": prompt_final,
                 }
-                return {
-                    "response_type": "stream_answer",
-                    "message": json.dumps(payload),
-                    "job_id": None,
-                }
+                return { "response_type": "stream_answer", "message": json.dumps(payload), "job_id": None }
              continue
 
         elif intent == "call_ingest_tool":
@@ -333,11 +331,11 @@ async def _route_intent(
             final_message = f"Solicitação de ingestão para {repo} recebida."
 
         elif intent == "call_send_onetime_report_tool":
-            email_destino = args.get("email_destino") or user_email
+            email = args.get("email_destino") or user_email
             func = enviar_relatorio_agendado
-            params = [None, email_destino, repo, args.get("prompt_relatorio"), user_id]
+            params = [None, email, repo, args.get("prompt_relatorio"), user_id]
             target_queue = q_reports
-            final_message = f"Iniciando envio de relatório para {email_destino}."
+            final_message = f"Iniciando envio de relatório para {email}."
 
         elif intent == "call_report_tool":
             func = processar_e_salvar_relatorio
@@ -353,28 +351,17 @@ async def _route_intent(
 
         elif intent == "call_schedule_tool":
             freq = args.get("frequencia")
-            email_to_use = args.get("user_email") or user_email
-            hora = args.get("hora")
-            tz = args.get("timezone")
-            data_inicio = args.get("data_inicio")
-            data_fim = args.get("data_fim")
-            
+            email = args.get("user_email") or user_email
             if not repo or not args.get("prompt_relatorio") or not freq:
-                 return { "response_type": "clarification", "message": "Dados incompletos para agendamento.", "job_id": None }
+                 return { "response_type": "clarification", "message": "Dados incompletos.", "job_id": None }
 
             if freq == "once":
                 func = enviar_relatorio_agendado
-                params = [None, email_to_use, repo, args.get("prompt_relatorio"), user_id]
+                params = [None, email, repo, args.get("prompt_relatorio"), user_id]
                 target_queue = q_reports
                 final_message = f"Relatório agendado para envio imediato."
             else:
-                if not hora or not tz:
-                     return { "response_type": "clarification", "message": "Preciso da hora e timezone para agendar.", "job_id": None }
-                
-                msg = create_schedule(
-                    user_id, email_to_use, repo, args["prompt_relatorio"], 
-                    freq, hora, tz, data_inicio, data_fim
-                )
+                msg = create_schedule(user_id, email, repo, args["prompt_relatorio"], freq, args.get("hora"), args.get("timezone"), args.get("data_inicio"), args.get("data_fim"))
                 final_message = msg
                 continue 
 
