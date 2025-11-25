@@ -192,31 +192,49 @@ class MetadataService:
     def get_recent_commits(self, user_id: str, repo_name: str, branch: str, limit: int = 5) -> List[Dict[str, Any]]:
         if not self.supabase: return []
         try:
-            # Se branch vier None (ex: ingestão antiga), assume main
-            target_branch = branch if branch else "main"
+            # Não força main, respeita o que veio (None ou nome da branch)
+            target_branch = branch 
             
+            print(f"\n[DEBUG TEMPORAL] ------------------------------------------------")
+            print(f"[DEBUG TEMPORAL] Buscando commits no DB.")
+            print(f"[DEBUG TEMPORAL] Repo: {repo_name} | Branch Alvo: {target_branch}")
+
             params = {
                 'match_user_id': user_id,
                 'match_repo': repo_name,
-                'match_branch': target_branch, # <--- Passando o branch
+                'match_branch': target_branch, 
                 'limit_count': limit
             }
             
+            # Executa a RPC
             response = self.supabase.rpc('get_recent_commits_user', params).execute()
+            data = response.data or []
+
+            print(f"[DEBUG TEMPORAL] O Banco retornou {len(data)} commits.")
             
             results = []
-            for row in (response.data or []):
-                data_commit = row['metadados'].get('date', 'N/A')
-                sha_curto = row['metadados'].get('sha', 'N/A')[:7]
+            for i, row in enumerate(data):
+                meta = row.get('metadados', {})
+                data_commit = meta.get('date', 'N/A')
+                sha = meta.get('sha', 'N/A')
+                msg = meta.get('message', '')[:50] # Primeiros 50 chars da mensagem
+                
+                # LOG CRÍTICO: Vamos ver a data que o banco trouxe
+                print(f"[DEBUG TEMPORAL] #{i+1} - SHA: {sha[:7]} | Data: {data_commit} | Branch: {row.get('branch')} | Msg: {msg}...")
                 
                 results.append({
-                    "conteudo": f"[DATA: {data_commit}] [SHA: {sha_curto}] {row['conteudo']}",
-                    "metadados": row['metadados'],
+                    "conteudo": f"[DATA: {data_commit}] [SHA: {sha[:7]}] {row['conteudo']}",
+                    "metadados": meta,
                     "tipo": "commit",
                     "file_path": "Contexto Temporal (Recente)", 
-                    "branch": target_branch 
+                    "branch": row.get('branch') or target_branch
                 })
+            
+            print(f"[DEBUG TEMPORAL] ------------------------------------------------\n")
             return results
+
         except Exception as e:
-            print(f"[MetadataService] Erro ao buscar commits recentes: {e}")
+            print(f"[MetadataService] ERRO CRÍTICO ao buscar commits: {e}")
+            import traceback
+            traceback.print_exc()
             return []
