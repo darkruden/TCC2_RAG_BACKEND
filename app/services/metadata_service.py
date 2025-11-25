@@ -212,7 +212,10 @@ class MetadataService:
     def get_recent_commits(self, user_id: str, repo_name: str, branch: str, limit: int = 5) -> List[Dict[str, Any]]:
         if not self.supabase: return []
         try:
-            target_branch = branch 
+            # --- CORREÇÃO: Voltamos para a lógica de "Default Main" ---
+            # Se branch for None (URL raiz), assumimos "main".
+            # Se branch tiver valor (ex: feature/x), usamos ela.
+            target_branch = branch if branch else "main"
             
             print(f"\n[DEBUG TEMPORAL] ------------------------------------------------")
             print(f"[DEBUG TEMPORAL] Buscando commits no DB.")
@@ -225,6 +228,7 @@ class MetadataService:
                 'limit_count': limit
             }
             
+            # Executa a RPC
             response = self.supabase.rpc('get_recent_commits_user', params).execute()
             data = response.data or []
 
@@ -235,7 +239,7 @@ class MetadataService:
                 meta = row.get('metadados', {})
                 data_commit = meta.get('date', 'N/A')
                 sha = meta.get('sha', 'N/A')
-                msg = meta.get('message', '')[:50] 
+                msg = meta.get('message', '')[:50]
                 
                 print(f"[DEBUG TEMPORAL] #{i+1} - SHA: {sha[:7]} | Data: {data_commit} | Branch: {row.get('branch')} | Msg: {msg}...")
                 
