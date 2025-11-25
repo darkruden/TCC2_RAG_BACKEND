@@ -232,11 +232,11 @@ async def _route_intent(
     user_id: str,
     user_email: str,
     last_user_prompt: str = "",
-    file_content: str = None # <-- NOVO PARÂMETRO
+    file_content: str = None 
 ) -> Dict[str, Any]:
     """
     Converte a saída do LLM em chamadas concretas.
-    Agora suporta injeção direta de conteúdo de arquivo para evitar resumos indesejados.
+    Agora com Lógica de 'Contexto Aderente' (Sticky Context).
     """
     # Verifica serviços globais
     if not conn or not q_ingest or not q_reports or not llm_service:
@@ -265,56 +265,59 @@ async def _route_intent(
         args = step.get("args", {}) or {}
         repo = args.get("repositorio")
 
-        # --- Lógica de Contexto Implícito (Repo) ---
+        # --- NOVA LÓGICA: CONTEXTO ADERENTE (STICKY CONTEXT) ---
+        # 1. Se o usuário ESPECIFICOU um repositório, salvamos ele como o novo padrão.
+        if repo:
+            try:
+                # Normaliza para garantir que salve user/repo ou a URL completa com tree
+                # (O backend aceita ambos, então salvamos como veio do LLM)
+                print(f"[Contexto] Atualizando contexto ativo para: {repo}")
+                supabase_client.table("usuarios").update({"last_ingested_repo": repo}).eq("id", user_id).execute()
+            except Exception as e:
+                print(f"[Contexto] Erro não fatal ao salvar contexto: {e}")
+
+        # 2. Se o usuário NÃO especificou (repo vazio), buscamos o último usado no banco.
         intents_needing_repo = [
             "call_query_tool", "call_report_tool", "call_ingest_tool", 
             "call_schedule_tool", "call_save_instruction_tool", "call_send_onetime_report_tool"
         ]
         
         if intent in intents_needing_repo and not repo:
-            # ... (Lógica de buscar last_ingested_repo no Supabase mantida igual) ...
-            # Para economizar espaço na resposta, assumo que você manteve o trecho de busca do user_data aqui
             try:
                 user_data = supabase_client.table("usuarios").select("last_ingested_repo").eq("id", user_id).execute()
                 if user_data.data and user_data.data[0].get("last_ingested_repo"):
-                    repo = user_data.data[0]["last_ingested_repo"]
-                    args["repositorio"] = repo
-            except: pass
+                    saved_repo = user_data.data[0]["last_ingested_repo"]
+                    print(f"[Contexto] Usando contexto implícito: {saved_repo}")
+                    repo = saved_repo
+                    args["repositorio"] = repo # Injeta no argumento
+            except Exception as e:
+                print(f"[Contexto] Falha ao recuperar contexto: {e}")
 
-        # --- INJEÇÃO DE CONTEÚDO DE ARQUIVO (A CORREÇÃO) ---
-        # Se temos um arquivo e a intenção usa 'prompt_relatorio', injetamos o conteúdo bruto.
+        # --- INJEÇÃO DE CONTEÚDO DE ARQUIVO ---
         if file_content and "prompt_relatorio" in args:
-            print(f"[TRACER] Injetando conteúdo do arquivo no prompt da intenção {intent}.")
             prompt_atual = args.get("prompt_relatorio", "")
-            # Adiciona o conteúdo do arquivo ao final do prompt
             args["prompt_relatorio"] = f"{prompt_atual}\n\n--- CONTEÚDO DO ARQUIVO DE INSTRUÇÕES ---\n{file_content}"
 
-        # Se a intenção for 'report' (download), o campo costuma ser 'prompt_usuario'
         if file_content and intent == "call_report_tool" and "prompt_usuario" in args:
-             print(f"[TRACER] Injetando conteúdo do arquivo no prompt de relatório.")
              prompt_atual = args.get("prompt_usuario", "")
              args["prompt_usuario"] = f"{prompt_atual}\n\n--- CONTEÚDO DO ARQUIVO DE INSTRUÇÕES ---\n{file_content}"
 
 
-        # ... Execução das ferramentas ...
+        # ... Execução das ferramentas (Sem alterações abaixo) ...
         func = None
         params = []
         target_queue = None
 
         if intent == "call_query_tool":
-             # Se for Query, retornamos para o frontend iniciar o stream
              if i == len(steps) - 1:
                 
-                # --- CORREÇÃO: Injeção de Arquivo para Análise de Código ---
                 prompt_final = args.get("prompt_usuario")
                 if file_content:
-                    # Anexa o código/texto bruto para garantir que nada se perca no resumo
                     prompt_final = f"{prompt_final}\n\n--- ARQUIVO ANEXADO ---\n{file_content}"
-                # -----------------------------------------------------------
 
                 payload = {
                     "repositorio": repo,
-                    "prompt_usuario": prompt_final, # Usa o prompt turbinado
+                    "prompt_usuario": prompt_final,
                 }
                 return {
                     "response_type": "stream_answer",
@@ -330,10 +333,8 @@ async def _route_intent(
             final_message = f"Solicitação de ingestão para {repo} recebida."
 
         elif intent == "call_send_onetime_report_tool":
-            print(f"[TRACER] Roteando {intent} para envio imediato.")
             email_destino = args.get("email_destino") or user_email
             func = enviar_relatorio_agendado
-            # Note que agora 'args["prompt_relatorio"]' já contém o arquivo anexado
             params = [None, email_destino, repo, args.get("prompt_relatorio"), user_id]
             target_queue = q_reports
             final_message = f"Iniciando envio de relatório para {email_destino}."
@@ -357,8 +358,6 @@ async def _route_intent(
             tz = args.get("timezone")
             data_inicio = args.get("data_inicio")
             data_fim = args.get("data_fim")
-            
-            # args["prompt_relatorio"] aqui já está turbinado com o arquivo
             
             if not repo or not args.get("prompt_relatorio") or not freq:
                  return { "response_type": "clarification", "message": "Dados incompletos para agendamento.", "job_id": None }
