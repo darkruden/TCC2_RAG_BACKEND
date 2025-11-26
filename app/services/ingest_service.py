@@ -42,24 +42,42 @@ class IngestService:
     def ingest_repository(self, user_id: str, repo_url: str, issues_limit: int, prs_limit: int, commits_limit: int, max_depth: int) -> Dict[str, Any]:
         print(f"[TRACER] Início Ingestão: {repo_url} (User: {user_id})")
         
+        # --- 1. INTELIGÊNCIA ELÁSTICA (Calcula Workers Dinamicamente) ---
+        limits = self.github.check_rate_limit()
+        remaining = limits.get("remaining", 5000)
+        
+        # Lógica de Decisão baseada no saldo da API
+        if remaining > 4000:
+            current_max_workers = 10 # Modo Turbo
+            print(f"[IngestService] MODO TURBO: {remaining} créditos. Usando {current_max_workers} threads.")
+        elif remaining > 2000:
+            current_max_workers = 5  # Modo Padrão
+            print(f"[IngestService] MODO PADRÃO: {remaining} créditos. Usando {current_max_workers} threads.")
+        elif remaining > 500:
+            current_max_workers = 2  # Modo Economia
+            print(f"[IngestService] MODO ECONOMIA: {remaining} créditos. Usando {current_max_workers} threads.")
+        else:
+            current_max_workers = 1  # Modo Sobrevivência
+            print(f"[IngestService] MODO SOBREVIVÊNCIA: {remaining} créditos. Ingestão sequencial.")
+        # ----------------------------------------------------------------
+
         try:
-            # 1. Identificação e Metadados (ORDEM CORRIGIDA)
+            # 2. Identificação e Metadados (Correção da Branch)
             repo_name, parsed_branch = self.github.parse_repo_url(repo_url)
             
-            # Busca metadados PRIMEIRO para descobrir a branch default real (main ou master)
+            # Busca metadados para confirmar branch real
             repo_meta = self.github.get_repo_metadata(repo_name)
             default_branch = repo_meta.get("default_branch", "main")
             visibility = repo_meta.get("visibility", "private")
             
-            # Se a URL não trouxe branch, usamos a oficial do repo
+            # Decide a branch final
             branch = parsed_branch if parsed_branch else default_branch
             
             print(f"[TRACER] Repo: {repo_name} | Branch Detectada: {branch} | Visibilidade: {visibility}")
             
-            # Atualiza contexto do usuário com a branch correta
             self.metadata.update_user_last_repo(user_id, f"{repo_name}/tree/{branch}")
 
-            # 2. Metadados (Commits/Issues/PRs)
+            # 3. Ingestão de Metadados (Commits/Issues)
             latest_ts = self.metadata.get_latest_timestamp(user_id, repo_name, branch)
             github_data = self.github.get_repo_data_batch(
                 repo_url, issues_limit, prs_limit, commits_limit, since=latest_ts, branch=branch
@@ -67,19 +85,17 @@ class IngestService:
             
             meta_docs = self._create_metadata_docs(user_id, repo_name, branch, github_data, visibility)
             if meta_docs:
-                print(f"[TRACER] Salvando {len(meta_docs)} novos metadados (Commits/Issues)...")
+                print(f"[TRACER] Salvando {len(meta_docs)} novos metadados...")
                 self._save_batch(user_id, meta_docs)
             else:
                 print("[TRACER] Nenhum metadado novo.")
 
-            # 3. ARQUIVOS - Lógica Cirúrgica com Paralelismo
+            # 4. ARQUIVOS - Lógica com Paralelismo Dinâmico
             print(f"[TRACER] Iniciando sincronização de arquivos na branch {branch}...")
             
-            # A. Mapeamento (Agora usa a branch garantida)
             github_files_map = self.github.get_repo_file_structure(repo_name, branch)
             db_files_map = self.metadata.get_existing_file_shas(user_id, repo_name, branch)
 
-            # B. Cálculo do Diff
             files_to_add_update = []
             files_to_delete = []
             unchanged_count = 0
@@ -96,20 +112,20 @@ class IngestService:
                 if path not in github_files_map:
                     files_to_delete.append(path)
 
-            print(f"[TRACER] Análise de Arquivos: {len(files_to_add_update)} para baixar, {len(files_to_delete)} para deletar.")
+            print(f"[TRACER] Arquivos: {len(files_to_add_update)} baixar, {len(files_to_delete)} deletar.")
 
             # D1. Deleta obsoletos
             if files_to_delete:
                 self.metadata.delete_files_by_paths(user_id, repo_name, branch, files_to_delete)
 
-            # D2. Download Paralelo
+            # D2. Download Paralelo (Usando current_max_workers calculado acima)
             new_docs = []
             successful_updates = 0
             
             if files_to_add_update:
-                print(f"[IngestService] Baixando {len(files_to_add_update)} arquivos em paralelo (5 threads)...")
+                print(f"[IngestService] Iniciando download com {current_max_workers} workers...")
                 
-                with ThreadPoolExecutor(max_workers=5) as executor:
+                with ThreadPoolExecutor(max_workers=current_max_workers) as executor:
                     future_to_path = {
                         executor.submit(self._download_file_content, repo_name, path, branch): path 
                         for path in files_to_add_update

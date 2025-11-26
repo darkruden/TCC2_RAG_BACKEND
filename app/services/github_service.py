@@ -212,3 +212,24 @@ class GithubService:
             return False
         except Exception:
             return False
+        
+    # Adicione este método dentro da classe GithubService
+    def check_rate_limit(self) -> Dict[str, Any]:
+        """
+        Consulta o 'saldo' da API do GitHub.
+        """
+        try:
+            # Pega o limite do núcleo (Core)
+            rate_limit = self.g.get_rate_limit().core
+            
+            status = {
+                "limit": rate_limit.limit,
+                "remaining": rate_limit.remaining,
+                "reset": rate_limit.reset.isoformat()
+            }
+            print(f"[GitHubService] Rate Limit: {status['remaining']}/{status['limit']} restantes.")
+            return status
+        except Exception as e:
+            print(f"[GitHubService] Erro ao checar limites: {e}")
+            # Fallback seguro: assume que tem 5000 para não travar, mas o try/catch do ingest segura
+            return {"limit": 5000, "remaining": 5000}
