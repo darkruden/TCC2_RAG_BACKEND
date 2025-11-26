@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Tuple
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor # <--- OTIMIZAÇÃO
 
 # Constantes de Extensões (Mantidas)
 TEXT_EXTENSIONS = {
@@ -76,13 +77,11 @@ class GithubService:
     def get_repo_file_structure(self, repo_name: str, branch: str) -> Dict[str, str]:
         """
         Retorna um mapa {path: sha} de todos os arquivos de texto do repositório.
-        Usa a Git Tree API para ser rápido e leve (não baixa conteúdo).
         """
         print(f"[GitHubService] Mapeando estrutura de arquivos para {repo_name} (Branch: {branch})...")
         repo = self.g.get_repo(repo_name)
         
         try:
-            # Pega a árvore recursiva (limite ~100k arquivos, suficiente para TCC)
             tree = repo.get_git_tree(sha=branch, recursive=True)
         except GithubException as e:
             print(f"[GitHubService] Erro ao buscar árvore git: {e}")
@@ -99,7 +98,6 @@ class GithubService:
 
     def get_file_content(self, repo_name: str, file_path: str, branch: str) -> Optional[str]:
         """Baixa o conteúdo de um único arquivo."""
-        # print(f"[GitHubService] Baixando: {file_path}") 
         try:
             repo = self.g.get_repo(repo_name)
             content_file = repo.get_contents(file_path, ref=branch)
@@ -124,12 +122,25 @@ class GithubService:
             repo_name, _ = self.parse_repo_url(repo_url)
             repo = self.g.get_repo(repo_name)
 
-            commits = self._get_repo_commits(repo, commits_limit, since, sha=branch)
-            
+            print(f"[GitHubService] Iniciando busca PARALELA de metadados (Commits={commits_limit}, Issues={issues_limit})...")
+
+            # --- OTIMIZAÇÃO: Paralelismo na busca de metadados ---
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                future_commits = executor.submit(self._get_repo_commits, repo, commits_limit, since, branch)
+                future_issues = executor.submit(self._get_repo_issues, repo, issues_limit, since)
+                future_prs = executor.submit(self._get_repo_prs, repo, prs_limit, since)
+                
+                # O .result() bloqueia até que a thread termine, mas elas rodam juntas
+                commits_data = future_commits.result()
+                issues_data = future_issues.result()
+                prs_data = future_prs.result()
+
+            print(f"[GitHubService] Busca finalizada. Commits: {len(commits_data)}, Issues: {len(issues_data)}, PRs: {len(prs_data)}")
+
             return {
-                "commits": commits,
-                "issues": self._get_repo_issues(repo, issues_limit, since),
-                "prs": self._get_repo_prs(repo, prs_limit, since)
+                "commits": commits_data,
+                "issues": issues_data,
+                "prs": prs_data
             }
 
     # --- Helpers Internos (Mantidos) ---
@@ -188,11 +199,6 @@ class GithubService:
             return prs_data
         except Exception:
             return []
-
-    # Mantive o método antigo para retrocompatibilidade se necessário, mas o novo IngestService não o usará
-    def get_repo_files_batch(self, *args, **kwargs):
-        print("[GitHubService] DEPRECATED: get_repo_files_batch chamado. Use get_repo_file_structure.")
-        return []
 
     def _is_text_file(self, file_path: str) -> bool:
         try:
