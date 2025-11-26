@@ -1,0 +1,537 @@
+2025-11-26 15:21:48,100 [INFO] === INICIANDO TESTE DE ESTRESSE DETALHADO ===
+2025-11-26 15:21:48,101 [INFO] Alvo: https://meu-tcc-testes-041c1dd46d1d.herokuapp.com/api/chat
+2025-11-26 15:21:48,101 [INFO] Carga: 60 requisições concorrentes
+2025-11-26 15:21:48,101 [INFO] Log: Salvando em stress_test.log
+
+2025-11-26 15:21:48,610 [INFO] [Student-47] Iniciando ingestão para: prometheus/prometheus
+2025-11-26 15:21:48,647 [INFO] [Student-42] Iniciando ingestão para: kubernetes/kubernetes
+2025-11-26 15:21:48,667 [INFO] [Student-24] Iniciando ingestão para: ant-design/ant-design
+2025-11-26 15:21:48,670 [INFO] [Student-23] Iniciando ingestão para: mui/material-ui
+2025-11-26 15:21:48,674 [INFO] [Student-13] Iniciando ingestão para: angular/angular
+2025-11-26 15:21:48,715 [INFO] [Student-10] Iniciando ingestão para: sqlalchemy/sqlalchemy
+2025-11-26 15:21:48,716 [INFO] [Student-57] Iniciando ingestão para: git/git
+2025-11-26 15:21:48,791 [INFO] [Student-25] Iniciando ingestão para: chakra-ui/chakra-ui
+2025-11-26 15:21:48,829 [INFO] [Student-15] Iniciando ingestão para: reduxjs/redux
+2025-11-26 15:21:48,899 [INFO] [Student-36] Iniciando ingestão para: microsoft/vscode
+2025-11-26 15:21:48,923 [INFO] [Student-60] Iniciando ingestão para: curl/curl
+2025-11-26 15:21:49,057 [INFO] [Student-05] Iniciando ingestão para: pydantic/pydantic
+2025-11-26 15:21:49,089 [INFO] [Student-12] Iniciando ingestão para: vuejs/core
+2025-11-26 15:21:49,140 [INFO] [Student-35] Iniciando ingestão para: denoland/deno
+2025-11-26 15:21:49,165 [INFO] [Student-20] Iniciando ingestão para: remix-run/remix
+2025-11-26 15:21:49,193 [INFO] [Student-06] Iniciando ingestão para: encode/starlette
+2025-11-26 15:21:49,289 [INFO] [Student-16] Iniciando ingestão para: axios/axios
+2025-11-26 15:21:49,298 [INFO] [Student-43] Iniciando ingestão para: helm/helm
+2025-11-26 15:21:49,365 [INFO] [Student-27] Iniciando ingestão para: gin-gonic/gin
+2025-11-26 15:21:49,409 [INFO] [Student-58] Iniciando ingestão para: neovim/neovim
+2025-11-26 15:21:49,470 [INFO] [Student-32] Iniciando ingestão para: tokio-rs/tokio
+2025-11-26 15:21:49,522 [INFO] [Student-21] Iniciando ingestão para: twbs/bootstrap
+2025-11-26 15:21:49,527 [INFO] [Student-46] Iniciando ingestão para: grafana/grafana
+2025-11-26 15:21:49,583 [INFO] [Student-09] Iniciando ingestão para: celery/celery
+2025-11-26 15:21:49,676 [INFO] [Student-07] Iniciando ingestão para: encode/httpx
+2025-11-26 15:21:49,705 [INFO] [Student-01] Iniciando ingestão para: pallets/flask
+2025-11-26 15:21:49,745 [INFO] [Student-08] Iniciando ingestão para: tiangolo/typer
+2025-11-26 15:21:49,796 [INFO] [Student-55] Iniciando ingestão para: ohmyzsh/ohmyzsh
+2025-11-26 15:21:49,811 [INFO] [Student-31] Iniciando ingestão para: rust-lang/rust
+2025-11-26 15:21:49,824 [INFO] [Student-48] Iniciando ingestão para: elastic/elasticsearch
+2025-11-26 15:21:49,858 [INFO] [Student-18] Iniciando ingestão para: nestjs/nest
+2025-11-26 15:21:49,909 [INFO] [Student-34] Iniciando ingestão para: bevyengine/bevy
+2025-11-26 15:21:50,015 [INFO] [Student-04] Iniciando ingestão para: psf/requests
+2025-11-26 15:21:50,118 [INFO] [Student-11] Iniciando ingestão para: facebook/react
+2025-11-26 15:21:50,156 [INFO] [Student-53] Iniciando ingestão para: donnemartin/system-design-primer
+2025-11-26 15:21:50,156 [INFO] [Student-02] Iniciando ingestão para: django/django
+2025-11-26 15:21:50,221 [INFO] [Student-29] Iniciando ingestão para: spf13/cobra
+2025-11-26 15:21:50,226 [INFO] [Student-26] Iniciando ingestão para: golang/go
+2025-11-26 15:21:50,242 [INFO] [Student-45] Iniciando ingestão para: ansible/ansible
+2025-11-26 15:21:50,307 [INFO] [Student-44] Iniciando ingestão para: hashicorp/terraform
+2025-11-26 15:21:50,312 [INFO] [Student-50] Iniciando ingestão para: mongodb/mongo
+2025-11-26 15:21:50,328 [INFO] [Student-59] Iniciando ingestão para: tmux/tmux
+2025-11-26 15:21:50,362 [INFO] [Student-40] Iniciando ingestão para: puppeteer/puppeteer
+2025-11-26 15:21:50,372 [INFO] [Student-41] Iniciando ingestão para: docker/cli
+2025-11-26 15:21:50,423 [INFO] [Student-54] Iniciando ingestão para: jwasham/coding-interview-university
+2025-11-26 15:21:50,426 [INFO] [Student-03] Iniciando ingestão para: fastapi/fastapi
+2025-11-26 15:21:50,439 [INFO] [Student-14] Iniciando ingestão para: sveltejs/svelte
+2025-11-26 15:21:50,490 [INFO] [Student-37] Iniciando ingestão para: microsoft/typescript
+2025-11-26 15:21:50,507 [INFO] [Student-52] Iniciando ingestão para: public-apis/public-apis
+2025-11-26 15:21:50,517 [INFO] [Student-39] Iniciando ingestão para: cypress-io/cypress
+2025-11-26 15:21:50,615 [INFO] [Student-17] Iniciando ingestão para: expressjs/express
+2025-11-26 15:21:50,622 [INFO] [Student-28] Iniciando ingestão para: gofiber/fiber
+2025-11-26 15:21:50,697 [INFO] [Student-19] Iniciando ingestão para: vercel/next.js
+2025-11-26 15:21:50,717 [INFO] [Student-33] Iniciando ingestão para: serde-rs/serde
+2025-11-26 15:21:50,756 [INFO] [Student-22] Iniciando ingestão para: tailwindlabs/tailwindcss
+2025-11-26 15:21:50,772 [INFO] [Student-56] Iniciando ingestão para: torvalds/linux
+2025-11-26 15:21:50,825 [INFO] [Student-38] Iniciando ingestão para: facebook/jest
+2025-11-26 15:21:50,988 [INFO] [Student-49] Iniciando ingestão para: redis/redis
+2025-11-26 15:21:51,047 [INFO] [Student-30] Iniciando ingestão para: spf13/viper
+2025-11-26 15:21:51,094 [INFO] [Student-51] Iniciando ingestão para: kamranahmedse/developer-roadmap
+2025-11-26 15:21:51,196 [INFO] ✅ [Student-42] SUCESSO | Repo: kubernetes/kubernetes | JobID: f94401b1-f3d8-4180-8d0f-5c9fe894ec59 | Tempo API: 2.55s
+2025-11-26 15:21:51,296 [INFO] ✅ [Student-13] SUCESSO | Repo: angular/angular | JobID: b41104f1-626e-4bb1-97d1-fc26c402a6b1 | Tempo API: 2.62s
+2025-11-26 15:21:52,449 [INFO] ✅ [Student-57] SUCESSO | Repo: git/git | JobID: f4d1fc5c-d369-4028-9245-345789ac5698 | Tempo API: 3.73s
+2025-11-26 15:21:52,637 [INFO] ✅ [Student-24] SUCESSO | Repo: ant-design/ant-design | JobID: 5a771856-1e42-485c-991d-9ac4279a2bdf | Tempo API: 3.97s
+2025-11-26 15:21:53,822 [INFO] ✅ [Student-25] SUCESSO | Repo: chakra-ui/chakra-ui | JobID: 2741abb5-9be8-4165-9c34-fd0bc9d802d7 | Tempo API: 5.03s
+2025-11-26 15:21:55,053 [INFO] ✅ [Student-23] SUCESSO | Repo: mui/material-ui | JobID: f34d3f26-ed97-4e5c-9b54-c7dd8d577225 | Tempo API: 6.38s
+2025-11-26 15:21:55,136 [INFO] ✅ [Student-47] SUCESSO | Repo: prometheus/prometheus | JobID: 3d738755-a35f-4bcd-9462-37f0bfd7d180 | Tempo API: 6.53s
+2025-11-26 15:21:55,137 [INFO] ✅ [Student-51] SUCESSO | Repo: kamranahmedse/developer-roadmap | JobID: 19d550f5-17b9-44a9-a4c9-1a1ca84f8913 | Tempo API: 4.04s
+2025-11-26 15:21:56,207 [INFO] ✅ [Student-12] SUCESSO | Repo: vuejs/core | JobID: 69a4c1e5-1c56-4ddb-a88d-95c5efa5e3f0 | Tempo API: 7.12s
+2025-11-26 15:21:56,520 [INFO] ✅ [Student-10] SUCESSO | Repo: sqlalchemy/sqlalchemy | JobID: 9527add8-78bc-46a1-b375-b48f4c675fad | Tempo API: 7.81s
+2025-11-26 15:21:57,351 [INFO] ✅ [Student-35] SUCESSO | Repo: denoland/deno | JobID: 7d3a5573-0233-44c9-9058-4cde813b73b0 | Tempo API: 8.21s
+2025-11-26 15:21:57,706 [INFO] ✅ [Student-15] SUCESSO | Repo: reduxjs/redux | JobID: 74e54d94-59d1-4895-9316-83a71bb8d6a1 | Tempo API: 8.88s
+2025-11-26 15:21:58,759 [INFO] ✅ [Student-20] SUCESSO | Repo: remix-run/remix | JobID: c72a7f70-2abb-4a04-8f98-6d6380110f75 | Tempo API: 9.59s
+2025-11-26 15:21:58,927 [INFO] ✅ [Student-36] SUCESSO | Repo: microsoft/vscode | JobID: 0f3ef42e-bf7c-4102-8243-d710990f24f9 | Tempo API: 10.03s
+2025-11-26 15:21:59,859 [INFO] ✅ [Student-06] SUCESSO | Repo: encode/starlette | JobID: 62cb5d08-ae08-42c3-9f43-961b2ca94907 | Tempo API: 10.67s
+2025-11-26 15:22:00,171 [INFO] ✅ [Student-60] SUCESSO | Repo: curl/curl | JobID: 4579d96f-ca64-4efb-9394-f797a3c8ea7f | Tempo API: 11.23s
+2025-11-26 15:22:00,934 [INFO] ✅ [Student-16] SUCESSO | Repo: axios/axios | JobID: 5bcb1c85-8def-4326-8dc5-52a005d9c6f2 | Tempo API: 11.64s
+2025-11-26 15:22:01,334 [INFO] ✅ [Student-05] SUCESSO | Repo: pydantic/pydantic | JobID: 284b2431-97ed-4250-b351-c3f21fe91b9b | Tempo API: 12.28s
+2025-11-26 15:22:02,209 [INFO] ✅ [Student-27] SUCESSO | Repo: gin-gonic/gin | JobID: fc050a27-df10-4707-bf70-27ae593a3cb9 | Tempo API: 12.84s
+2025-11-26 15:22:03,214 [INFO] ✅ [Student-43] SUCESSO | Repo: helm/helm | JobID: caa66715-c76e-4dfd-873e-2b475cab9c09 | Tempo API: 13.92s
+2025-11-26 15:22:03,289 [INFO] ✅ [Student-21] SUCESSO | Repo: twbs/bootstrap | JobID: 3621e57f-94fc-427c-8f43-2cda77e9a5cf | Tempo API: 13.77s
+2025-11-26 15:22:04,398 [INFO] ✅ [Student-58] SUCESSO | Repo: neovim/neovim | JobID: cf87acf7-b9e9-40a1-92e6-48e43bc835c5 | Tempo API: 14.99s
+2025-11-26 15:22:04,518 [INFO] ✅ [Student-09] SUCESSO | Repo: celery/celery | JobID: 22bc2781-0e64-4188-ab9e-2adc86aa7e2c | Tempo API: 14.93s
+2025-11-26 15:22:06,024 [INFO] ✅ [Student-32] SUCESSO | Repo: tokio-rs/tokio | JobID: 31f7aa63-e67f-4fec-bd84-068e8548da7b | Tempo API: 16.55s
+2025-11-26 15:22:07,041 [INFO] ✅ [Student-07] SUCESSO | Repo: encode/httpx | JobID: 0fd18536-ade4-40d6-8b3d-0a1b632923de | Tempo API: 17.36s
+2025-11-26 15:22:07,791 [INFO] ✅ [Student-46] SUCESSO | Repo: grafana/grafana | JobID: 3967d676-624a-4b78-9530-0cb66fe9506d | Tempo API: 18.26s
+2025-11-26 15:22:08,333 [INFO] ✅ [Student-01] SUCESSO | Repo: pallets/flask | JobID: a88b8139-4b54-4efd-95c1-972090b7c65c | Tempo API: 18.63s
+2025-11-26 15:22:09,034 [INFO] ✅ [Student-31] SUCESSO | Repo: rust-lang/rust | JobID: 1c9d46a8-e3d3-469c-9251-a0cde5291031 | Tempo API: 19.22s
+2025-11-26 15:22:09,669 [INFO] ✅ [Student-08] SUCESSO | Repo: tiangolo/typer | JobID: 7d1be7df-cbdd-4aac-b1a7-bf070cfe125a | Tempo API: 19.92s
+2025-11-26 15:22:10,287 [INFO] ✅ [Student-48] SUCESSO | Repo: elastic/elasticsearch | JobID: 3b7b9388-49b9-496a-ba1a-250ec5642f1b | Tempo API: 20.46s
+2025-11-26 15:22:11,114 [INFO] ✅ [Student-34] SUCESSO | Repo: bevyengine/bevy | JobID: 853a7376-e207-4a69-9b9d-76d6b30da561 | Tempo API: 21.21s
+2025-11-26 15:22:11,615 [INFO] ✅ [Student-18] SUCESSO | Repo: nestjs/nest | JobID: 959bcf8b-0b8c-46ad-bd8e-c5b8c720d24c | Tempo API: 21.76s
+2025-11-26 15:22:12,248 [INFO] ✅ [Student-11] SUCESSO | Repo: facebook/react | JobID: 0e3acabf-b8e6-4bf9-9864-06539f112ce8 | Tempo API: 22.13s
+2025-11-26 15:22:12,955 [INFO] ✅ [Student-55] SUCESSO | Repo: ohmyzsh/ohmyzsh | JobID: e424d4b8-8d10-4e6f-b3a0-70233b50b514 | Tempo API: 23.16s
+2025-11-26 15:22:13,587 [INFO] ✅ [Student-02] SUCESSO | Repo: django/django | JobID: 7581eecb-1a0c-465e-9f0a-9b68b11dbc5f | Tempo API: 23.43s
+2025-11-26 15:22:14,141 [INFO] ✅ [Student-04] SUCESSO | Repo: psf/requests | JobID: de0b7046-91e2-4e04-b040-417bfa3d0a7e | Tempo API: 24.13s
+2025-11-26 15:22:14,961 [INFO] ✅ [Student-53] SUCESSO | Repo: donnemartin/system-design-primer | JobID: 0f65aac6-f876-48a4-a707-68bb846b5512 | Tempo API: 24.81s
+2025-11-26 15:22:15,357 [INFO] ✅ [Student-45] SUCESSO | Repo: ansible/ansible | JobID: 88d0c0ca-4850-4919-9c04-97175ce9b5ee | Tempo API: 25.11s
+2025-11-26 15:22:16,107 [INFO] ✅ [Student-26] SUCESSO | Repo: golang/go | JobID: e4071799-e32e-47f6-aea9-7d3d4061f869 | Tempo API: 25.88s
+2025-11-26 15:22:16,494 [INFO] ✅ [Student-44] SUCESSO | Repo: hashicorp/terraform | JobID: 01e11177-9959-47b2-9bdb-59be0f31c327 | Tempo API: 26.19s
+2025-11-26 15:22:17,278 [INFO] ✅ [Student-29] SUCESSO | Repo: spf13/cobra | JobID: 9eeebad5-8d4c-411f-8cde-5c1d830ff6d3 | Tempo API: 27.06s
+2025-11-26 15:22:18,457 [INFO] ✅ [Student-41] SUCESSO | Repo: docker/cli | JobID: 7515bdf4-25de-40bc-929e-4efa749a5a81 | Tempo API: 28.09s
+2025-11-26 15:22:18,509 [INFO] ✅ [Student-50] SUCESSO | Repo: mongodb/mongo | JobID: 98add812-a0a5-49e3-b230-e3bd92152e67 | Tempo API: 28.20s
+2025-11-26 15:22:19,712 [INFO] ✅ [Student-59] SUCESSO | Repo: tmux/tmux | JobID: 47e1b293-3174-46bc-ba08-0bbe88c3ccca | Tempo API: 29.38s
+2025-11-26 15:22:19,784 [INFO] ✅ [Student-54] SUCESSO | Repo: jwasham/coding-interview-university | JobID: f873165d-99dd-4710-a008-ca2197f0c13f | Tempo API: 29.36s
+2025-11-26 15:22:20,765 [ERROR] ❌ [Student-40] FALHA HTTP 503 | Body: <!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8">
+    <title>Application Error</title>
+    <style media="screen">
+      html,body,iframe {
+        margin: 0;
+        padding: 0;
+      }
+
+      html,body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe src="https://www.herokucdn.com/error-pages/application-error.html"></iframe>
+  </body>
+</html>
+2025-11-26 15:22:20,836 [ERROR] ❌ [Student-03] FALHA HTTP 503 | Body: <!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8">
+    <title>Application Error</title>
+    <style media="screen">
+      html,body,iframe {
+        margin: 0;
+        padding: 0;
+      }
+
+      html,body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe src="https://www.herokucdn.com/error-pages/application-error.html"></iframe>
+  </body>
+</html>
+2025-11-26 15:22:20,853 [ERROR] ❌ [Student-14] FALHA HTTP 503 | Body: <!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8">
+    <title>Application Error</title>
+    <style media="screen">
+      html,body,iframe {
+        margin: 0;
+        padding: 0;
+      }
+
+      html,body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe src="https://www.herokucdn.com/error-pages/application-error.html"></iframe>
+  </body>
+</html>
+2025-11-26 15:22:20,914 [ERROR] ❌ [Student-37] FALHA HTTP 503 | Body: <!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8">
+    <title>Application Error</title>
+    <style media="screen">
+      html,body,iframe {
+        margin: 0;
+        padding: 0;
+      }
+
+      html,body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe src="https://www.herokucdn.com/error-pages/application-error.html"></iframe>
+  </body>
+</html>
+2025-11-26 15:22:20,917 [ERROR] ❌ [Student-39] FALHA HTTP 503 | Body: <!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8">
+    <title>Application Error</title>
+    <style media="screen">
+      html,body,iframe {
+        margin: 0;
+        padding: 0;
+      }
+
+      html,body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe src="https://www.herokucdn.com/error-pages/application-error.html"></iframe>
+  </body>
+</html>
+2025-11-26 15:22:20,933 [ERROR] ❌ [Student-52] FALHA HTTP 503 | Body: <!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8">
+    <title>Application Error</title>
+    <style media="screen">
+      html,body,iframe {
+        margin: 0;
+        padding: 0;
+      }
+
+      html,body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe src="https://www.herokucdn.com/error-pages/application-error.html"></iframe>
+  </body>
+</html>
+2025-11-26 15:22:21,042 [ERROR] ❌ [Student-17] FALHA HTTP 503 | Body: <!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8">
+    <title>Application Error</title>
+    <style media="screen">
+      html,body,iframe {
+        margin: 0;
+        padding: 0;
+      }
+
+      html,body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe src="https://www.herokucdn.com/error-pages/application-error.html"></iframe>
+  </body>
+</html>
+2025-11-26 15:22:21,042 [ERROR] ❌ [Student-28] FALHA HTTP 503 | Body: <!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8">
+    <title>Application Error</title>
+    <style media="screen">
+      html,body,iframe {
+        margin: 0;
+        padding: 0;
+      }
+
+      html,body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe src="https://www.herokucdn.com/error-pages/application-error.html"></iframe>
+  </body>
+</html>
+2025-11-26 15:22:21,110 [ERROR] ❌ [Student-19] FALHA HTTP 503 | Body: <!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8">
+    <title>Application Error</title>
+    <style media="screen">
+      html,body,iframe {
+        margin: 0;
+        padding: 0;
+      }
+
+      html,body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe src="https://www.herokucdn.com/error-pages/application-error.html"></iframe>
+  </body>
+</html>
+2025-11-26 15:22:21,122 [ERROR] ❌ [Student-33] FALHA HTTP 503 | Body: <!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8">
+    <title>Application Error</title>
+    <style media="screen">
+      html,body,iframe {
+        margin: 0;
+        padding: 0;
+      }
+
+      html,body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe src="https://www.herokucdn.com/error-pages/application-error.html"></iframe>
+  </body>
+</html>
+2025-11-26 15:22:21,156 [ERROR] ❌ [Student-22] FALHA HTTP 503 | Body: <!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8">
+    <title>Application Error</title>
+    <style media="screen">
+      html,body,iframe {
+        margin: 0;
+        padding: 0;
+      }
+
+      html,body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe src="https://www.herokucdn.com/error-pages/application-error.html"></iframe>
+  </body>
+</html>
+2025-11-26 15:22:21,192 [ERROR] ❌ [Student-56] FALHA HTTP 503 | Body: <!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8">
+    <title>Application Error</title>
+    <style media="screen">
+      html,body,iframe {
+        margin: 0;
+        padding: 0;
+      }
+
+      html,body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe src="https://www.herokucdn.com/error-pages/application-error.html"></iframe>
+  </body>
+</html>
+2025-11-26 15:22:21,240 [ERROR] ❌ [Student-38] FALHA HTTP 503 | Body: <!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8">
+    <title>Application Error</title>
+    <style media="screen">
+      html,body,iframe {
+        margin: 0;
+        padding: 0;
+      }
+
+      html,body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe src="https://www.herokucdn.com/error-pages/application-error.html"></iframe>
+  </body>
+</html>
+2025-11-26 15:22:21,413 [ERROR] ❌ [Student-49] FALHA HTTP 503 | Body: <!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8">
+    <title>Application Error</title>
+    <style media="screen">
+      html,body,iframe {
+        margin: 0;
+        padding: 0;
+      }
+
+      html,body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe src="https://www.herokucdn.com/error-pages/application-error.html"></iframe>
+  </body>
+</html>
+2025-11-26 15:22:21,452 [ERROR] ❌ [Student-30] FALHA HTTP 503 | Body: <!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8">
+    <title>Application Error</title>
+    <style media="screen">
+      html,body,iframe {
+        margin: 0;
+        padding: 0;
+      }
+
+      html,body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe src="https://www.herokucdn.com/error-pages/application-error.html"></iframe>
+  </body>
+</html>
+2025-11-26 15:22:21,458 [INFO] 
+=== RELATÓRIO FINAL ===
+2025-11-26 15:22:21,458 [INFO] Total Requisições: 60
+2025-11-26 15:22:21,458 [INFO] Sucessos: 45
+2025-11-26 15:22:21,459 [INFO] Falhas: 15
+2025-11-26 15:22:21,459 [INFO] Tempo Total de Execução: 33.36s
+2025-11-26 15:22:21,459 [INFO] Taxa de Sucesso: 75.0%
