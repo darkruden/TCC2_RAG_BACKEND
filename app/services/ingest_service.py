@@ -1,9 +1,10 @@
-# CÓDIGO COMPLETO PARA: app/services/ingest_service.py
+# CÓDIGO COMPLETO E OTIMIZADO PARA: app/services/ingest_service.py
 
 import os
 import traceback
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed # <--- OTIMIZAÇÃO: Paralelismo
 
 from app.services.github_service import GithubService
 from app.services.metadata_service import MetadataService
@@ -32,7 +33,15 @@ class IngestService:
         self.github = github_service
         self.metadata = metadata_service
         self.splitter = TCC_TextSplitter()
-        print("[IngestService] Inicializado com lógica cirúrgica (SHA Check).")
+        print("[IngestService] Inicializado com lógica cirúrgica e PARALELISMO.")
+
+    def _download_file_content(self, repo_name: str, path: str, branch: str) -> Tuple[str, str]:
+        """
+        Helper para ser executado em thread separada.
+        Retorna o caminho e o conteúdo baixado.
+        """
+        content = self.github.get_file_content(repo_name, path, branch)
+        return path, content
 
     def ingest_repository(self, user_id: str, repo_url: str, issues_limit: int, prs_limit: int, commits_limit: int, max_depth: int) -> Dict[str, Any]:
         print(f"[TRACER] Início Ingestão: {repo_url} (User: {user_id})")
@@ -47,11 +56,10 @@ class IngestService:
 
             # 2. Metadados Gerais & Visibilidade
             repo_meta = self.github.get_repo_metadata(repo_name)
-            visibility = repo_meta.get("visibility", "private") # 'public' ou 'private'
+            visibility = repo_meta.get("visibility", "private") 
             print(f"[TRACER] Repo: {repo_name} | Branch: {branch} | Visibilidade: {visibility}")
 
-            # 3. Metadados (Commits/Issues/PRs) - Lógica Incremental de Data (Delta)
-            # (Isso mantemos igual pois já era eficiente)
+            # 3. Metadados (Commits/Issues/PRs)
             latest_ts = self.metadata.get_latest_timestamp(user_id, repo_name, branch)
             github_data = self.github.get_repo_data_batch(
                 repo_url, issues_limit, prs_limit, commits_limit, since=latest_ts, branch=branch
@@ -71,11 +79,9 @@ class IngestService:
             
             # A. O que temos no GitHub agora?
             github_files_map = self.github.get_repo_file_structure(repo_name, branch)
-            # Ex: {'src/main.py': 'sha123', 'README.md': 'sha456'}
 
             # B. O que já temos no Banco?
             db_files_map = self.metadata.get_existing_file_shas(user_id, repo_name, branch)
-            # Ex: {'src/main.py': 'sha123', 'old_file.py': 'sha789'}
 
             # C. Cálculo do Diff
             files_to_add_update = []
@@ -104,54 +110,70 @@ class IngestService:
             if files_to_delete:
                 self.metadata.delete_files_by_paths(user_id, repo_name, branch, files_to_delete)
 
-            # D2. Baixa e Processa Novos/Modificados
+            # D2. Baixa e Processa Novos/Modificados (AGORA COM PARALELISMO)
             new_docs = []
-            successful_updates = 0 # Contador real
+            successful_updates = 0 
             
-            for i, path in enumerate(files_to_add_update):
-                # 1. Tenta baixar primeiro
-                content = self.github.get_file_content(repo_name, path, branch)
+            # Se houver arquivos para baixar, usamos o ThreadPool
+            if files_to_add_update:
+                print(f"[IngestService] Baixando {len(files_to_add_update)} arquivos em paralelo (5 threads)...")
                 
-                # Se falhar (None), pulamos e NÃO deletamos o antigo (se existir)
-                if content is None: 
-                    print(f"[IngestService] AVISO: Conteúdo vazio ou inválido para {path}. Ignorando.")
-                    continue
-
-                # 2. Se baixou com sucesso, aí sim deletamos o antigo para substituir
-                if path in db_files_map:
-                     self.metadata.delete_files_by_paths(user_id, repo_name, branch, [path])
-
-                # 3. Processamento normal
-                chunks = self.splitter.split_text(content)
-                file_sha = github_files_map[path]
-
-                for chunk in chunks:
-                    if not chunk.strip(): continue
-                    doc = {
-                        "user_id": user_id,
-                        "repositorio": repo_name,
-                        "branch": branch,
-                        "file_path": path,
-                        "file_sha": file_sha,
-                        "visibility": visibility,
-                        "conteudo": chunk,
-                        "tipo": "file"
+                # max_workers=5 é seguro para não estourar rate limits do GitHub rapidamente
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    # Submete todas as tarefas
+                    future_to_path = {
+                        executor.submit(self._download_file_content, repo_name, path, branch): path 
+                        for path in files_to_add_update
                     }
-                    new_docs.append(doc)
-                
-                successful_updates += 1 # Conta apenas sucessos
-                
-                # Salva em mini-lotes
-                if len(new_docs) >= 50:
-                    self._save_batch(user_id, new_docs)
-                    new_docs = []
-            
+
+                    # Processa à medida que os downloads terminam (as_completed)
+                    for future in as_completed(future_to_path):
+                        path = future_to_path[future]
+                        try:
+                            _, content = future.result()
+                            
+                            # Se falhar (None), pulamos
+                            if content is None: 
+                                print(f"[IngestService] AVISO: Conteúdo vazio ou inválido para {path}. Ignorando.")
+                                continue
+
+                            # Se baixou com sucesso, aí sim deletamos o antigo para substituir
+                            if path in db_files_map:
+                                self.metadata.delete_files_by_paths(user_id, repo_name, branch, [path])
+
+                            # Processamento normal (CPU Bound)
+                            chunks = self.splitter.split_text(content)
+                            file_sha = github_files_map[path]
+
+                            for chunk in chunks:
+                                if not chunk.strip(): continue
+                                doc = {
+                                    "user_id": user_id,
+                                    "repositorio": repo_name,
+                                    "branch": branch,
+                                    "file_path": path,
+                                    "file_sha": file_sha,
+                                    "visibility": visibility,
+                                    "conteudo": chunk,
+                                    "tipo": "file"
+                                }
+                                new_docs.append(doc)
+                            
+                            successful_updates += 1
+                            
+                            # Salva em mini-lotes
+                            if len(new_docs) >= 50:
+                                self._save_batch(user_id, new_docs)
+                                new_docs = []
+                                
+                        except Exception as exc:
+                            print(f"[IngestService] Erro ao processar arquivo {path}: {exc}")
+
             # Salva o resto
             if new_docs:
                 self._save_batch(user_id, new_docs)
 
-            # --- LÓGICA DE MENSAGEM DE STATUS ATUALIZADA ---
-            # Agora usamos 'successful_updates' em vez do tamanho da lista bruta
+            # --- LÓGICA DE MENSAGEM DE STATUS ---
             total_changes = successful_updates + len(files_to_delete)
             
             if total_changes == 0 and not meta_docs:
@@ -163,7 +185,7 @@ class IngestService:
                 "status": "sucesso",
                 "repo": repo_name,
                 "branch": branch,
-                "updated": successful_updates, # Retorna o número real
+                "updated": successful_updates,
                 "deleted": len(files_to_delete),
                 "unchanged": unchanged_count,
                 "mensagem": status_msg
@@ -176,7 +198,6 @@ class IngestService:
 
     def _create_metadata_docs(self, user_id, repo, branch, data, visibility):
         docs = []
-        # Helper simples para criar docs de metadados
         def add(item, tipo, extra={}):
             docs.append({
                 "user_id": user_id, "repositorio": repo, "branch": branch, "tipo": tipo,
@@ -193,14 +214,11 @@ class IngestService:
     def _save_batch(self, user_id, docs):
         self.metadata.save_documents_batch(user_id, docs)
 
-    # ... (save_instruction_document e handle_webhook mantidos iguais, apenas adicione visibility='private' neles se necessário) ...
     def save_instruction_document(self, user_id: str, repo_url: str, instrucao_texto: str):
-         # Implementação idêntica ao anterior, mas garanta que não quebre
          return self.metadata.save_documents_batch(user_id, [{
              "user_id": user_id, "repositorio": repo_url, "instrucao_texto": instrucao_texto, 
              "conteudo": instrucao_texto, "tipo": "instruction", "visibility": "private"
          }])
          
     def handle_webhook(self, event_type, payload):
-        # Mantido simplificado para brevidade, a lógica é a mesma
         return {"status": "webhook_received"}
