@@ -68,53 +68,79 @@ class MetadataService:
 
     def save_documents_batch(self, user_id: str, documents: List[Dict[str, Any]]):
         """
-        Salva documentos com tratamento robusto de duplicatas.
+        Salva documentos com otimização seletiva de embeddings.
+        Arquivos -> Embedding Real (OpenAI)
+        Metadados -> Embedding Dummy (Zeros) para performance extrema.
         """
         if not self.supabase or not self.embedding_service: return
         if not documents: return
         
         try:
-            # Gera embeddings para todos (operação cara, fazemos antes de tentar inserir)
-            textos_para_embedding = [doc["conteudo"] for doc in documents]
-            embeddings = self.embedding_service.get_embeddings_batch(textos_para_embedding)
+            # Separa o que precisa de IA do que não precisa
+            docs_com_embedding = []
+            docs_sem_embedding = []
             
-            documentos_para_salvar = []
+            indices_com_embedding = []
+            indices_sem_embedding = []
+
             for i, doc in enumerate(documents):
-                doc["embedding"] = embeddings[i]
+                # --- REGRA DE NEGÓCIO: Só gera inteligência para CÓDIGO e INSTRUÇÕES ---
+                if doc.get("tipo") in ["file", "instruction"]:
+                    docs_com_embedding.append(doc["conteudo"])
+                    indices_com_embedding.append(i)
+                else:
+                    # Commits, Issues e PRs vão sem custo de IA
+                    docs_sem_embedding.append(doc)
+                    indices_sem_embedding.append(i)
+
+            # 1. Gera Embeddings Reais apenas para os arquivos (Lento, mas necessário)
+            embeddings_reais = []
+            if docs_com_embedding:
+                # print(f"[MetadataService] Gerando {len(docs_com_embedding)} embeddings reais (Arquivos)...")
+                embeddings_reais = self.embedding_service.get_embeddings_batch(docs_com_embedding)
+
+            # 2. Gera Vetores Zerados (Dummy) para metadados (Instantâneo)
+            # Cria um vetor de 1536 zeros (dimensão do text-embedding-3-small)
+            dummy_vector = [0.0] * 1536 
+
+            # 3. Remonta a lista original com os vetores certos
+            documentos_para_salvar = [None] * len(documents)
+
+            # Preenche os reais
+            for local_idx, original_idx in enumerate(indices_com_embedding):
+                doc = documents[original_idx]
+                doc["embedding"] = embeddings_reais[local_idx]
                 doc["user_id"] = user_id
                 if "branch" not in doc: doc["branch"] = "main"
                 if "visibility" not in doc: doc["visibility"] = "private"
                 if "file_sha" not in doc: doc["file_sha"] = None
-                
-                documentos_para_salvar.append(doc)
+                documentos_para_salvar[original_idx] = doc
+
+            # Preenche os dummies (Commits/Issues)
+            for original_idx in indices_sem_embedding:
+                doc = documents[original_idx]
+                doc["embedding"] = dummy_vector # Vetor nulo
+                doc["user_id"] = user_id
+                if "branch" not in doc: doc["branch"] = "main"
+                if "visibility" not in doc: doc["visibility"] = "private"
+                if "file_sha" not in doc: doc["file_sha"] = None
+                documentos_para_salvar[original_idx] = doc
             
-            # --- LÓGICA DE FALLBACK PARA DUPLICATAS ---
+            # --- LÓGICA DE FALLBACK PARA DUPLICATAS (MANTIDA) ---
             try:
-                # 1. Tenta Inserção em Lote (Rápido)
                 self.supabase.table("documentos").insert(documentos_para_salvar).execute()
             
             except Exception as e:
-                # Se der erro de chave duplicada (Código 23505 no Postgres)
                 error_str = str(e)
                 if "23505" in error_str or "duplicate key" in error_str:
-                    print("[MetadataService] AVISO: Duplicatas detectadas no lote. Alternando para inserção individual segura...")
-                    
-                    # 2. Fallback: Insere um por um, ignorando erros de quem já existe
-                    sucessos = 0
+                    # print("[MetadataService] AVISO: Duplicatas no lote. Inserindo individualmente...")
                     for doc in documentos_para_salvar:
                         try:
                             self.supabase.table("documentos").insert(doc).execute()
-                            sucessos += 1
                         except Exception as inner_e:
-                            # Se for duplicata individual, ignoramos. Se for outro erro, logamos.
-                            if "23505" in str(inner_e) or "duplicate key" in str(inner_e):
-                                pass # Ignora silenciosamente, já existe
-                            else:
-                                print(f"[MetadataService] Erro ao salvar item individual: {inner_e}")
-                    
-                    print(f"[MetadataService] Recuperação concluída: {sucessos} novos itens inseridos, duplicatas ignoradas.")
+                            if "23505" in str(inner_e) or "duplicate key" in str(inner_e): pass
+                            else: print(f"[MetadataService] Erro individual: {inner_e}")
                 else:
-                    # Se foi outro erro (rede, auth, etc), relança
                     raise e
 
         except Exception as e:
