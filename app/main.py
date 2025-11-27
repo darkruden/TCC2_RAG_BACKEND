@@ -93,6 +93,7 @@ app = FastAPI(
 # O wildcard "*" é incompatível com allow_credentials=True.
 ALLOWED_ORIGINS = [
     "chrome-extension://ajiinnakfafbdkfmodpbmdlbegjmehfh", # ID da sua extensão 
+    "chrome-extension://ikphdjokbfkacfcnlaikleddfgamomia",
     "http://localhost:3000", # Para desenvolvimento local do frontend
 ]
 
