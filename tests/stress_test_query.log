@@ -1,0 +1,52 @@
+2025-11-27 00:33:24,059 [INFO] === INICIANDO TESTE DE CARGA (RAG/CONSULTAS) ===
+2025-11-27 00:33:24,059 [INFO] URL: https://meu-tcc-testes-041c1dd46d1d.herokuapp.com/api/chat
+2025-11-27 00:33:24,059 [INFO] Usuários Simultâneos: 20
+2025-11-27 00:33:24,059 [INFO] --------------------------------------------------
+2025-11-27 00:33:24,291 [INFO] 🔵 [User-18] Perguntando sobre: pallets/flask | Query: 'Existe alguma menção a banco de dados no código?'
+2025-11-27 00:33:24,365 [INFO] 🔵 [User-17] Perguntando sobre: darkruden/tcc2_rag_backend | Query: 'Quais são as principais dependências listadas?'
+2025-11-27 00:33:24,529 [INFO] 🔵 [User-15] Perguntando sobre: pallets/flask | Query: 'Quais são as principais dependências listadas?'
+2025-11-27 00:33:24,626 [INFO] 🔵 [User-14] Perguntando sobre: facebook/react | Query: 'Como funciona o sistema de autenticação?'
+2025-11-27 00:33:24,772 [INFO] 🔵 [User-20] Perguntando sobre: pallets/flask | Query: 'Quais são as principais dependências listadas?'
+2025-11-27 00:33:24,809 [INFO] 🔵 [User-07] Perguntando sobre: pallets/flask | Query: 'Resuma o objetivo deste repositório em um parágrafo.'
+2025-11-27 00:33:24,926 [INFO] 🔵 [User-06] Perguntando sobre: darkruden/tcc2_rag_frontend | Query: 'Explique a arquitetura principal deste projeto.'
+2025-11-27 00:33:24,948 [INFO] 🔵 [User-10] Perguntando sobre: darkruden/tcc2_rag_frontend | Query: 'Explique a arquitetura principal deste projeto.'
+2025-11-27 00:33:24,962 [INFO] 🔵 [User-05] Perguntando sobre: pallets/flask | Query: 'Explique a arquitetura principal deste projeto.'
+2025-11-27 00:33:25,171 [INFO] 🔵 [User-13] Perguntando sobre: darkruden/tcc2_rag_backend | Query: 'Como funciona o sistema de autenticação?'
+2025-11-27 00:33:25,181 [INFO] 🔵 [User-11] Perguntando sobre: darkruden/tcc2_rag_frontend | Query: 'Resuma o objetivo deste repositório em um parágrafo.'
+2025-11-27 00:33:25,210 [INFO] 🔵 [User-09] Perguntando sobre: pallets/flask | Query: 'Quais são as principais dependências listadas?'
+2025-11-27 00:33:25,307 [INFO] 🔵 [User-02] Perguntando sobre: darkruden/tcc2_rag_backend | Query: 'Resuma o objetivo deste repositório em um parágrafo.'
+2025-11-27 00:33:25,365 [INFO] 🔵 [User-04] Perguntando sobre: darkruden/tcc2_rag_backend | Query: 'Existe alguma menção a banco de dados no código?'
+2025-11-27 00:33:25,383 [INFO] 🔵 [User-08] Perguntando sobre: darkruden/tcc2_rag_backend | Query: 'Resuma o objetivo deste repositório em um parágrafo.'
+2025-11-27 00:33:25,441 [INFO] 🔵 [User-01] Perguntando sobre: django/django | Query: 'Resuma o objetivo deste repositório em um parágrafo.'
+2025-11-27 00:33:25,615 [INFO] 🔵 [User-19] Perguntando sobre: darkruden/tcc2_rag_frontend | Query: 'Resuma o objetivo deste repositório em um parágrafo.'
+2025-11-27 00:33:25,700 [INFO] 🔵 [User-03] Perguntando sobre: darkruden/tcc2_rag_frontend | Query: 'Resuma o objetivo deste repositório em um parágrafo.'
+2025-11-27 00:33:25,701 [INFO] 🔵 [User-16] Perguntando sobre: django/django | Query: 'Explique a arquitetura principal deste projeto.'
+2025-11-27 00:33:25,746 [INFO] 🔵 [User-12] Perguntando sobre: facebook/react | Query: 'Quem são os principais autores nos commits recentes?'
+2025-11-27 00:33:29,122 [INFO] ✅ [User-08] SUCESSO | Tempo: 3.74s | Tipo: stream_answer
+2025-11-27 00:33:30,959 [INFO] ✅ [User-13] SUCESSO | Tempo: 5.79s | Tipo: stream_answer
+2025-11-27 00:33:33,176 [INFO] ✅ [User-15] SUCESSO | Tempo: 8.65s | Tipo: stream_answer
+2025-11-27 00:33:35,110 [INFO] ✅ [User-01] SUCESSO | Tempo: 9.67s | Tipo: stream_answer
+2025-11-27 00:33:37,095 [INFO] ✅ [User-18] SUCESSO | Tempo: 12.80s | Tipo: stream_answer
+2025-11-27 00:33:38,552 [INFO] ✅ [User-10] SUCESSO | Tempo: 13.60s | Tipo: stream_answer
+2025-11-27 00:33:40,487 [INFO] ✅ [User-03] SUCESSO | Tempo: 14.79s | Tipo: stream_answer
+2025-11-27 00:33:42,374 [INFO] ✅ [User-19] SUCESSO | Tempo: 16.76s | Tipo: stream_answer
+2025-11-27 00:33:43,868 [INFO] ✅ [User-20] SUCESSO | Tempo: 19.10s | Tipo: stream_answer
+2025-11-27 00:33:45,292 [INFO] ✅ [User-09] SUCESSO | Tempo: 20.08s | Tipo: stream_answer
+2025-11-27 00:33:46,770 [INFO] ✅ [User-16] SUCESSO | Tempo: 21.07s | Tipo: stream_answer
+2025-11-27 00:33:48,760 [INFO] ✅ [User-07] SUCESSO | Tempo: 23.95s | Tipo: stream_answer
+2025-11-27 00:33:50,534 [INFO] ✅ [User-11] SUCESSO | Tempo: 25.35s | Tipo: stream_answer
+2025-11-27 00:33:51,806 [INFO] ✅ [User-12] SUCESSO | Tempo: 26.06s | Tipo: stream_answer
+2025-11-27 00:33:53,717 [INFO] ✅ [User-06] SUCESSO | Tempo: 28.79s | Tipo: stream_answer
+2025-11-27 00:33:55,236 [INFO] ✅ [User-02] SUCESSO | Tempo: 29.93s | Tipo: stream_answer
+2025-11-27 00:33:56,365 [ERROR] Hz [User-14] FALHA 503 (Heroku Busy/Timeout) | Tempo: 31.74s
+2025-11-27 00:33:56,365 [ERROR] Hz [User-17] FALHA 503 (Heroku Busy/Timeout) | Tempo: 32.00s
+2025-11-27 00:33:56,365 [ERROR] Hz [User-05] FALHA 503 (Heroku Busy/Timeout) | Tempo: 31.40s
+2025-11-27 00:33:56,408 [ERROR] Hz [User-04] FALHA 503 (Heroku Busy/Timeout) | Tempo: 31.04s
+2025-11-27 00:33:56,412 [INFO] 
+=== RELATÓRIO FINAL DE ESTRESSE (CONSULTA) ===
+2025-11-27 00:33:56,412 [INFO] Tempo Total: 32.35s
+2025-11-27 00:33:56,412 [INFO] Throughput: 0.62 req/s
+2025-11-27 00:33:56,412 [INFO] Taxa de Sucesso: 80.0%
+2025-11-27 00:33:56,412 [INFO] Detalhamento dos status:
+2025-11-27 00:33:56,412 [INFO]   - fail_503: 4
+2025-11-27 00:33:56,412 [INFO]   - success: 16

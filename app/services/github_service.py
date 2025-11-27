@@ -219,17 +219,26 @@ class GithubService:
         Consulta o 'saldo' da API do GitHub.
         """
         try:
-            # Pega o limite do núcleo (Core)
-            rate_limit = self.g.get_rate_limit().core
+            # Tenta obter o objeto geral
+            rate_limit_obj = self.g.get_rate_limit()
             
+            # Tenta acessar 'core' (API REST) ou usa o objeto direto se for GraphQL/Outro
+            # Em algumas versões do PyGithub, o objeto raiz já contém os dados ou usa 'rate'
+            core_limit = getattr(rate_limit_obj, 'core', rate_limit_obj)
+            
+            # Se ainda falhar, tenta acessar atributos diretos (fallback genérico)
+            limit = getattr(core_limit, 'limit', 5000)
+            remaining = getattr(core_limit, 'remaining', 5000)
+            reset = getattr(core_limit, 'reset', datetime.now())
+
             status = {
-                "limit": rate_limit.limit,
-                "remaining": rate_limit.remaining,
-                "reset": rate_limit.reset.isoformat()
+                "limit": limit,
+                "remaining": remaining,
+                "reset": reset.isoformat() if isinstance(reset, datetime) else str(reset)
             }
             print(f"[GitHubService] Rate Limit: {status['remaining']}/{status['limit']} restantes.")
             return status
         except Exception as e:
-            print(f"[GitHubService] Erro ao checar limites: {e}")
-            # Fallback seguro: assume que tem 5000 para não travar, mas o try/catch do ingest segura
+            print(f"[GitHubService] Aviso: Erro não-fatal ao checar limites ({e}). Usando valores padrão.")
+            # Fallback seguro: assume que tem 5000 para não travar
             return {"limit": 5000, "remaining": 5000}

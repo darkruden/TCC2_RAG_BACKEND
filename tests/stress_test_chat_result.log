@@ -1,0 +1,52 @@
+2025-11-27 00:37:17,858 [INFO] === INICIANDO TESTE DE CARGA (RAG/CONSULTAS) ===
+2025-11-27 00:37:17,858 [INFO] URL: https://meu-tcc-testes-041c1dd46d1d.herokuapp.com/api/chat
+2025-11-27 00:37:17,858 [INFO] Usuários Simultâneos: 20
+2025-11-27 00:37:17,858 [INFO] --------------------------------------------------
+2025-11-27 00:37:18,105 [INFO] 🔵 [User-13] Perguntando sobre: darkruden/tcc2_rag_backend | Query: 'Quais são as principais dependências no requirements.txt?'
+2025-11-27 00:37:18,376 [INFO] 🔵 [User-15] Perguntando sobre: pallets/flask | Query: 'Existe alguma menção a banco de dados no código?'
+2025-11-27 00:37:18,415 [INFO] 🔵 [User-03] Perguntando sobre: django/django | Query: 'Resuma o objetivo deste repositório em um parágrafo.'
+2025-11-27 00:37:18,486 [INFO] 🔵 [User-17] Perguntando sobre: django/django | Query: 'Resuma o objetivo deste repositório em um parágrafo.'
+2025-11-27 00:37:18,536 [INFO] 🔵 [User-05] Perguntando sobre: darkruden/tcc2_rag_backend | Query: 'Explique a arquitetura principal deste projeto.'
+2025-11-27 00:37:18,550 [INFO] 🔵 [User-06] Perguntando sobre: darkruden/tcc2_rag_backend | Query: 'Quais são as principais dependências no requirements.txt?'
+2025-11-27 00:37:18,572 [INFO] 🔵 [User-09] Perguntando sobre: django/django | Query: 'Resuma o objetivo deste repositório em um parágrafo.'
+2025-11-27 00:37:18,613 [INFO] 🔵 [User-14] Perguntando sobre: darkruden/tcc2_rag_backend | Query: 'Explique a arquitetura principal deste projeto.'
+2025-11-27 00:37:18,683 [INFO] 🔵 [User-02] Perguntando sobre: pallets/flask | Query: 'Existe alguma menção a banco de dados no código?'
+2025-11-27 00:37:18,695 [INFO] 🔵 [User-04] Perguntando sobre: django/django | Query: 'Resuma o objetivo deste repositório em um parágrafo.'
+2025-11-27 00:37:18,808 [INFO] 🔵 [User-19] Perguntando sobre: darkruden/tcc2_rag_backend | Query: 'Explique a arquitetura principal deste projeto.'
+2025-11-27 00:37:18,879 [INFO] 🔵 [User-01] Perguntando sobre: pallets/flask | Query: 'Existe alguma menção a banco de dados no código?'
+2025-11-27 00:37:19,017 [INFO] 🔵 [User-18] Perguntando sobre: darkruden/tcc2_rag_frontend | Query: 'Como funciona o componente de Chat?'
+2025-11-27 00:37:19,047 [INFO] 🔵 [User-10] Perguntando sobre: darkruden/tcc2_rag_backend | Query: 'Explique a arquitetura principal deste projeto.'
+2025-11-27 00:37:19,138 [INFO] 🔵 [User-08] Perguntando sobre: django/django | Query: 'Resuma o objetivo deste repositório em um parágrafo.'
+2025-11-27 00:37:19,237 [INFO] 🔵 [User-07] Perguntando sobre: django/django | Query: 'Resuma o objetivo deste repositório em um parágrafo.'
+2025-11-27 00:37:19,432 [INFO] 🔵 [User-16] Perguntando sobre: darkruden/tcc2_rag_backend | Query: 'Explique a arquitetura principal deste projeto.'
+2025-11-27 00:37:19,460 [INFO] 🔵 [User-20] Perguntando sobre: pallets/flask | Query: 'Existe alguma menção a banco de dados no código?'
+2025-11-27 00:37:19,787 [INFO] 🔵 [User-11] Perguntando sobre: facebook/react | Query: 'Como o React lida com o Virtual DOM?'
+2025-11-27 00:37:19,825 [INFO] 🔵 [User-12] Perguntando sobre: darkruden/tcc2_rag_frontend | Query: 'Como funciona o componente de Chat?'
+2025-11-27 00:37:20,812 [INFO] ✅ [User-15] SUCESSO | Tempo: 2.44s | Tipo: stream_answer
+2025-11-27 00:37:22,342 [INFO] ✅ [User-13] SUCESSO | Tempo: 4.24s | Tipo: stream_answer
+2025-11-27 00:37:23,844 [INFO] ✅ [User-03] SUCESSO | Tempo: 5.43s | Tipo: stream_answer
+2025-11-27 00:37:25,442 [INFO] ✅ [User-17] SUCESSO | Tempo: 6.96s | Tipo: stream_answer
+2025-11-27 00:37:27,245 [INFO] ✅ [User-14] SUCESSO | Tempo: 8.63s | Tipo: stream_answer
+2025-11-27 00:37:28,809 [INFO] ✅ [User-09] SUCESSO | Tempo: 10.24s | Tipo: stream_answer
+2025-11-27 00:37:30,509 [INFO] ✅ [User-05] SUCESSO | Tempo: 11.97s | Tipo: stream_answer
+2025-11-27 00:37:32,111 [INFO] ✅ [User-06] SUCESSO | Tempo: 13.56s | Tipo: stream_answer
+2025-11-27 00:37:33,499 [INFO] ✅ [User-02] SUCESSO | Tempo: 14.82s | Tipo: stream_answer
+2025-11-27 00:37:34,972 [INFO] ✅ [User-04] SUCESSO | Tempo: 16.28s | Tipo: stream_answer
+2025-11-27 00:37:37,025 [INFO] ✅ [User-19] SUCESSO | Tempo: 18.22s | Tipo: stream_answer
+2025-11-27 00:37:38,957 [INFO] ✅ [User-01] SUCESSO | Tempo: 20.08s | Tipo: stream_answer
+2025-11-27 00:37:40,635 [INFO] ✅ [User-18] SUCESSO | Tempo: 21.62s | Tipo: stream_answer
+2025-11-27 00:37:41,964 [INFO] ✅ [User-10] SUCESSO | Tempo: 22.92s | Tipo: stream_answer
+2025-11-27 00:37:43,655 [INFO] ✅ [User-08] SUCESSO | Tempo: 24.52s | Tipo: stream_answer
+2025-11-27 00:37:45,116 [INFO] ✅ [User-07] SUCESSO | Tempo: 25.88s | Tipo: stream_answer
+2025-11-27 00:37:46,502 [INFO] ✅ [User-16] SUCESSO | Tempo: 27.07s | Tipo: stream_answer
+2025-11-27 00:37:47,858 [INFO] ✅ [User-20] SUCESSO | Tempo: 28.40s | Tipo: stream_answer
+2025-11-27 00:37:49,362 [INFO] ✅ [User-11] SUCESSO | Tempo: 29.58s | Tipo: stream_answer
+2025-11-27 00:37:50,269 [ERROR] Hz [User-12] FALHA 503 (Heroku Busy/Timeout) | Tempo: 30.44s
+2025-11-27 00:37:50,285 [INFO] 
+=== RELATÓRIO FINAL DE ESTRESSE (CONSULTA) ===
+2025-11-27 00:37:50,285 [INFO] Tempo Total: 32.43s
+2025-11-27 00:37:50,285 [INFO] Throughput: 0.62 req/s
+2025-11-27 00:37:50,285 [INFO] Taxa de Sucesso: 95.0%
+2025-11-27 00:37:50,285 [INFO] Detalhamento dos status:
+2025-11-27 00:37:50,285 [INFO]   - success: 19
+2025-11-27 00:37:50,285 [INFO]   - fail_503: 1
