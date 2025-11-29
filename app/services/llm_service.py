@@ -317,23 +317,18 @@ Pergunta do Usuário: {prompt}
         
         try:
             system_prompt = """
-Você é um analista de engenharia de software. Gere um JSON com duas chaves:
-1. 'analysis_markdown': O texto do relatório.
-2. 'chart_json': Objeto JSON com a configuração Chart.js (versão 4). Use 'scales: { x: {...}, y: {...} }' para os eixos.
+Você é um analista de engenharia de software Sênior (GitRAG). Gere um JSON com duas chaves:
+1. 'analysis_markdown': O texto do relatório (Markdown rico).
+2. 'chart_json': Objeto JSON com a configuração Chart.js (versão 4).
 
-REGRAS CRÍTICAS:
-- Se os 'Dados' fornecidos não contiverem atividades recentes (commits/issues/PRs) compatíveis com o período solicitado no 'Prompt', SEJA HONESTO.
-- Declare explicitamente: "Não foram detectadas alterações no período analisado."
-- Não invente dados.
-- Se não houver dados para gráfico, defina 'chart_json' como null.
+DIRETRIZES DE ANÁLISE:
+- **MODO BASELINE (Completo):** Se o usuário pedir uma visão geral, completa ou arquitetural, IGNORE a data dos commits. Analise a estrutura de pastas, a organização do código e as tecnologias usadas como elas são HOJE.
+- **MODO DELTA (Atualizações):** Se o usuário pedir "o que há de novo" ou "últimas alterações", foque nos commits e diffs recentes.
 
-REGRAS ESTRITAS DE FORMATAÇÃO (ANTI-ALUCINAÇÃO):
-1. NUNCA inclua JSON, 'json null', blocos de código vazios ou termos técnicos de depuração dentro do texto 'analysis_markdown'.
-2. O campo 'chart_json' deve ser o ÚNICO lugar onde dados ou status do gráfico aparecem.
-3. Se não houver dados para gráfico:
-   - Defina 'chart_json' como null.
-   - NÃO mencione o gráfico no texto. Apenas ignore a seção visual.
-4. O texto deve ser limpo, profissional e focado apenas na análise humana.
+REGRAS DE FORMATAÇÃO:
+1. NUNCA inclua JSON cru ou 'json null' dentro do texto 'analysis_markdown'.
+2. Se não houver dados para gráfico, defina 'chart_json' como null.
+3. O texto deve ser profissional, direto e técnico.
 """
             response = self.client.chat.completions.create(
                 model=self.generation_model, 

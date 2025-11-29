@@ -127,8 +127,35 @@ def processar_e_salvar_relatorio(user_id: str, repo_url: str, prompt: str, forma
     if not report_service:
          raise RuntimeError("ReportService não inicializado.")
 
+    # --- NOVA LÓGICA DE INTELIGÊNCIA DE PROMPT ---
+    prompt_lower = prompt.lower()
+    # Palavras que indicam desejo de análise estrutural completa
+    keywords_baseline = ["completo", "tudo", "estrutura", "arquitetura", "baseline", "geral", "visão", "full"]
+    
+    prompt_ajustado = prompt
+    
+    # Se detectar intenção de "Completo", forçamos a instrução de sistema
+    if any(k in prompt_lower for k in keywords_baseline):
+        print(f"[WorkerTask] MODO BASELINE DETECTADO (Manual): Forçando análise completa para {repo_url}.")
+        prompt_ajustado += (
+            "\n\n[SISTEMA: INSTRUÇÃO PRIORITÁRIA - MODO BASELINE]\n"
+            "O usuário solicitou um relatório COMPLETO. "
+            "IGNORE restrições de tempo ou atividades recentes. "
+            "Sua tarefa é analisar o ESTADO ATUAL de todo o código (arquitetura, padrões, organização). "
+            "NÃO foque apenas no que mudou recentemente, descreva o projeto como um todo."
+        )
+    else:
+        # Caso contrário, adicionamos uma instrução padrão equilibrada
+        print(f"[WorkerTask] MODO PADRÃO (Manual): Foco misto (Novidades + Contexto).")
+        prompt_ajustado += (
+            "\n\n[SISTEMA: INSTRUÇÃO PADRÃO]\n"
+            "Analise o repositório com base na solicitação acima. "
+            "Se houver atualizações recentes, destaque-as, mas mantenha o contexto geral do projeto."
+        )
+    # ----------------------------------------------
+
     filename = report_service.gerar_e_salvar_relatorio(
-        user_id, repo_url, prompt
+        user_id, repo_url, prompt_ajustado # Usa o prompt "turbinado"
     )
     print(f"[WorkerTask] Upload com sucesso! Retornando filename: {filename}")
     return filename
